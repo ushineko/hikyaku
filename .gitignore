@@ -1,0 +1,11 @@
+# Build artifacts
+/hikyaku
+/hikyaku-*
+/dist/
+*.exe
+
+# Coverage
+coverage.out
+
+# The linter's per-checkout cache
+/.cache/

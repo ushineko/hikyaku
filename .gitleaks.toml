@@ -1,0 +1,12 @@
+# gitleaks' rules, with an allow-list for the invented values tests, fixtures
+# and docs carry on purpose. By pattern, never by turning a rule off.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "invented values in tests, fixtures and docs"
+regexes = [
+  '''xox[bpa]-not-a-real-token''',
+  '''xapp-not-a-real-token''',
+  '''invented[-_a-z]*''',
+]
