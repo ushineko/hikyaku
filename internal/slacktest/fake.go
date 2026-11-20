@@ -208,33 +208,51 @@ func (f *Fake) Drop() {
 	f.conns = nil
 }
 
-// Reply delivers a message from user in the thread channel/threadTS over
-// every open Socket Mode connection.
-func (f *Fake) Reply(t *testing.T, channel, threadTS, user, text string) {
+// Reply delivers a message from user in the thread channel/threadTS of a
+// DM over every open Socket Mode connection, and returns its ts.
+func (f *Fake) Reply(t *testing.T, channel, threadTS, user, text string) string {
+	t.Helper()
+	return f.deliver(t, map[string]any{"channel": channel, "user": user, "text": text, "thread_ts": threadTS, "channel_type": "im"})
+}
+
+// Say delivers a top-level message from user in channel, whose type is
+// "im", "channel" or "group", and returns its ts.
+func (f *Fake) Say(t *testing.T, channel, channelType, user, text string) string {
+	t.Helper()
+	return f.deliver(t, map[string]any{"channel": channel, "user": user, "text": text, "channel_type": channelType})
+}
+
+// Bot delivers a top-level message from a bot in the DM channel.
+func (f *Fake) Bot(t *testing.T, channel, text string) {
+	t.Helper()
+	f.deliver(t, map[string]any{"channel": channel, "bot_id": "B00000001", "text": text, "channel_type": "im"})
+}
+
+func (f *Fake) deliver(t *testing.T, event map[string]any) string {
 	t.Helper()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.seq++
 	ts := fmt.Sprintf("1700000000.%06d", f.seq)
+	event["type"] = "message"
+	event["ts"] = ts
 	env := map[string]any{
 		"envelope_id": fmt.Sprintf("env-%d", f.seq), "type": "events_api", "accepts_response_payload": false,
 		"payload": map[string]any{
 			"token": "invented", "team_id": "T00000000", "api_app_id": "A00000000", "type": "event_callback",
 			"event_id": fmt.Sprintf("Ev%d", f.seq), "event_time": 1700000001,
-			"event": map[string]any{
-				"type": "message", "channel": channel, "user": user, "text": text,
-				"ts": ts, "thread_ts": threadTS, "channel_type": "im",
-			},
+			"event": event,
 		},
 	}
 	if len(f.conns) == 0 {
-		t.Fatal("reply with no socket mode connection")
+		t.Fatal("message with no socket mode connection")
 	}
 	for _, c := range f.conns {
 		if err := c.WriteJSON(env); err != nil {
-			t.Fatalf("deliver reply: %v", err)
+			t.Fatalf("deliver message: %v", err)
 		}
 	}
+	return ts
 }
 
 // Posts returns every chat.postMessage so far.

@@ -59,14 +59,21 @@ type Outgoing struct {
 // ReplyHint is the line a question carries.
 const ReplyHint = "Reply in this thread to answer."
 
-// Incoming is a message in a thread, as Slack reported it.
+// Incoming is a person's new message, as Slack reported it: a reply in a
+// thread (ThreadTS set) or a top-level message (ThreadTS empty).
 type Incoming struct {
-	Channel  string
-	ThreadTS string
-	TS       string
-	User     string
-	Text     string
+	Channel string
+	// ChannelType is "im" for a DM with the bot, "channel" or "group"
+	// for a public or private channel.
+	ChannelType string
+	ThreadTS    string
+	TS          string
+	User        string
+	Text        string
 }
+
+// InDM reports whether the message was written in a DM with the bot.
+func (m Incoming) InDM() bool { return m.ChannelType == "im" }
 
 // Poster posts messages and opens the DM with a user.
 type Poster interface {
@@ -74,7 +81,8 @@ type Poster interface {
 	Post(ctx context.Context, channel string, msg Outgoing) (postedChannel, ts string, err error)
 }
 
-// Listener holds the Socket Mode connection and reports thread replies.
+// Listener holds the Socket Mode connection and reports people's new
+// messages.
 type Listener interface {
 	Listen(ctx context.Context, replies chan<- Incoming, connected func(bool)) error
 }
@@ -332,7 +340,7 @@ func (c *Client) event(ctx context.Context, sm *socketmode.Client, evt socketmod
 			return
 		}
 		logEvent(c.log, api)
-		if in, ok := threadReply(api); ok {
+		if in, ok := personMessage(api); ok {
 			select {
 			case replies <- in:
 			case <-ctx.Done():
@@ -341,17 +349,21 @@ func (c *Client) event(ctx context.Context, sm *socketmode.Client, evt socketmod
 	}
 }
 
-// threadReply picks out a person's new message in a thread. Edits, deletions,
-// bot messages (our own included) and top-level messages are not replies.
-func threadReply(api slackevents.EventsAPIEvent) (Incoming, bool) {
+// personMessage picks out a person's new message. Edits, deletions and bot
+// messages (our own included) are not passed on. A message that starts a
+// thread is reported as top-level.
+func personMessage(api slackevents.EventsAPIEvent) (Incoming, bool) {
 	m, ok := api.InnerEvent.Data.(*slackevents.MessageEvent)
 	if !ok || m.SubType != "" || m.BotID != "" || m.User == "" {
 		return Incoming{}, false
 	}
-	if m.ThreadTimeStamp == "" || m.ThreadTimeStamp == m.TimeStamp {
-		return Incoming{}, false
+	thread := m.ThreadTimeStamp
+	if thread == m.TimeStamp {
+		thread = ""
 	}
-	return Incoming{Channel: m.Channel, ThreadTS: m.ThreadTimeStamp, TS: m.TimeStamp, User: m.User, Text: m.Text}, true
+	return Incoming{
+		Channel: m.Channel, ChannelType: m.ChannelType, ThreadTS: thread, TS: m.TimeStamp, User: m.User, Text: m.Text,
+	}, true
 }
 
 // logEvent records at debug level what kind of event arrived, so a reply

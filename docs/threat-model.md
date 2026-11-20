@@ -78,9 +78,23 @@ as a command for the purpose of deciding who may send one.
   so reply text cannot close its own fence and write outside it; the text is
   printed unchanged inside. The agent-side skill (spec 004) tells the agent
   how to treat it.
-- **Residual**: an allowed account that is compromised can steer the agent.
-  The label is a convention for the agent, not an enforcement; prompt
-  injection through an allowed reply is possible and is stated, not solved.
+- Instructions (spec 005) are the one way Slack text reaches an agent that
+  did not ask a question: an agent running `hikyaku listen` receives a
+  top-level message from an allowed user in their DM with the bot. Messages
+  in channels are never instructions, even from an allowed user, so channel
+  topics and other people's text cannot reach a listener. Nothing listens
+  unless an agent chose to, one `listen` takes one instruction, and an
+  instruction nobody takes is answered and dropped, never kept for later.
+  The text is fenced with a nonce and labelled as typed in Slack.
+- hikyaku never starts an agent. A chat message that can start work on the
+  desktop is the design that made other assistants' Slack integrations an
+  attack path (OpenClaw, CVE-2026-24764).
+- **Residual**: an allowed account that is compromised can steer the agent,
+  and with spec 005 can direct a listening agent, not only answer one. The
+  label is a convention for the agent, not an enforcement; prompt injection
+  through an allowed reply or instruction is possible and is stated, not
+  solved. The agent-side skill (spec 004) tells an agent to confirm anything
+  destructive before acting on an instruction.
 
 ## S4 What goes to Slack
 
