@@ -2,7 +2,17 @@
 
 **Issue**: [#4](https://github.com/ushineko/hikyaku/issues/4)
 
-## Status: INCOMPLETE
+## Status: COMPLETE
+
+## Executive Summary
+
+Adds `hikyaku listen`: a running agent waits for one instruction typed as
+a top-level message in the DM with the bot, receives it fenced and
+labelled as Slack data, and answers in its thread. Instructions are
+addressed by listener name when several agents listen; one nobody takes
+is dropped and the bot says so. Reviewers should look first at
+`internal/service/listen.go` (allow-list check, routing, hand-over under
+the lock) and the S3 changes in `docs/threat-model.md`.
 
 ## Context
 
@@ -58,28 +68,33 @@ agent in a sandbox.
 
 ## Acceptance Criteria
 
-- [ ] AC1 Against the fake Slack: a top-level DM from an allowed user
+- [x] AC1 Against the fake Slack: a top-level DM from an allowed user
   reaches a waiting `listen`, fenced with a nonce, labelled as an
   instruction from Slack, with its author, time and a handle, in text and
   `--json`; `send --thread` on that handle posts in the instruction's
   thread, and a reply there is routed by spec 001's rules. (R1, R3)
-- [ ] AC2 A top-level DM from a user who is not allowed, a message in a
+  `cli.TestAnInstructionReachesTheListener`.
+- [x] AC2 A top-level DM from a user who is not allowed, a message in a
   channel, and a thread reply each reach no listener. (R2)
-- [ ] AC3 With two listeners named `alpha` and `beta`, `beta: x` reaches
+  `cli.TestOnlyAnAllowedDMIsAnInstruction`; the stranger is logged by ID
+  and their text is not kept.
+- [x] AC3 With two listeners named `alpha` and `beta`, `beta: x` reaches
   `beta` as `x`; an instruction with no name reaches neither and the bot's
   thread answer names both; with one listener, an instruction with no name
   (or with a word before a colon that is not a listener's name) reaches it.
   A second `listen --name alpha` is refused. (R4)
-- [ ] AC4 With no listener, an instruction gets the "no agent is listening"
+  `cli.TestInstructionsAreAddressedByName`, `cli.TestDefaultNameIsTheProject`.
+- [x] AC4 With no listener, an instruction gets the "no agent is listening"
   answer in its thread, and a `listen` started afterwards does not receive
-  it. (R5)
-- [ ] AC5 A taken instruction gets the "picked up by" answer with the
-  listener's origin line. (R6)
-- [ ] AC6 `listen` times out with exit 124 and empty stdout; `status`
+  it. (R5) `cli.TestAnInstructionNobodyTakesIsDropped`.
+- [x] AC5 A taken instruction gets the "picked up by" answer with the
+  listener's origin line. (R6) `cli.TestAnInstructionReachesTheListener`.
+- [x] AC6 `listen` times out with exit 124 and empty stdout; `status`
   reports the listeners' names while they wait. (R1, R7)
-- [ ] AC7 **Real Slack**: an instruction typed on a phone reaches a
+  `cli.TestAnInstructionNobodyTakesIsDropped`; `status` in every listen test.
+- [x] AC7 **Real Slack**: an instruction typed on a phone reaches a
   listening agent, the pickup answer appears, and the agent answers in the
-  instruction's thread. (R1, R3, R6)
+  instruction's thread. (R1, R3, R6) E2E step 1, 2026-11-20.
 
 ## Decisions
 
@@ -132,6 +147,18 @@ confirm anything destructive before acting on it.
   neither; each reaches the right one and the third gets the list of names
   (AC3). (3) no listener, an instruction; the bot says no agent is
   listening (AC4).
+
+### E2E Results
+
+Run 2026-11-20 against the real workspace, service built from this branch
+(`0.0.0-42858a5-dev`), headless on Linux.
+
+| Step | Result |
+|------|--------|
+| 1 | Pass. A top-level DM reached `listen --timeout 30m` (listener `hikyaku`, the default name) fenced as an instruction with nonce, author ID, time and handle; exit 0. The service logged the pickup, and "Picked up." with the origin line appeared in the message's thread within a second. `send --thread` answered in the same thread. A further reply typed in that thread was filed under the answer's handle (spec 001 D10) and read with `inbox`. |
+| 1a | Pass. An earlier `listen --timeout 15m` with no message sent exited 124 with nothing on stdout. |
+| 2 | Not run against real Slack; covered by `cli.TestInstructionsAreAddressedByName` against the fake. |
+| 3 | Not run against real Slack; covered by `cli.TestAnInstructionNobodyTakesIsDropped` against the fake. |
 
 ### Prod visibility
 

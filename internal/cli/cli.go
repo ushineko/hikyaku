@@ -111,7 +111,7 @@ func Root(env *Env) *cobra.Command {
 	root.SetIn(env.Stdin)
 	root.SetOut(env.Stdout)
 	root.SetErr(env.Stderr)
-	root.AddCommand(serveCmd(env), sendCmd(env), askCmd(env), inboxCmd(env), tokenCmd(env), statusCmd(env))
+	root.AddCommand(serveCmd(env), sendCmd(env), askCmd(env), inboxCmd(env), listenCmd(env), tokenCmd(env), statusCmd(env))
 	return root
 }
 

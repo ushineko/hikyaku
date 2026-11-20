@@ -40,9 +40,10 @@ type Service struct {
 
 	connected atomic.Bool
 
-	mu      sync.Mutex
-	waiters map[string][]chan store.Reply
-	dm      string
+	mu        sync.Mutex
+	waiters   map[string][]chan store.Reply
+	listeners map[string]*listener
+	dm        string
 }
 
 // Deps is what a Service is built from.
@@ -70,7 +71,7 @@ func New(d Deps) *Service {
 	return &Service{
 		poster: d.Poster, listener: d.Listener, store: d.Store, settings: d.Settings,
 		repliers: d.Settings.Repliers(), log: d.Log, redact: d.Redact, now: d.Now,
-		waiters: map[string][]chan store.Reply{},
+		waiters: map[string][]chan store.Reply{}, listeners: map[string]*listener{},
 	}
 }
 
@@ -88,7 +89,12 @@ func (s *Service) Run(ctx context.Context) error {
 		case err := <-errc:
 			return err
 		case m := <-in:
-			s.reply(m)
+			switch {
+			case m.ThreadTS != "":
+				s.reply(m)
+			case m.InDM():
+				s.instruction(ctx, m)
+			}
 		}
 	}
 }
@@ -129,12 +135,14 @@ func (s *Service) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 		return ipc.Response{OK: true, Handle: h}
 	case ipc.OpWait:
 		return s.wait(ctx, req)
+	case ipc.OpListen:
+		return s.listen(ctx, req)
 	case ipc.OpInbox:
 		return s.inbox(req)
 	case ipc.OpStatus:
 		return ipc.Response{OK: true, Status: &ipc.Status{
 			PID: os.Getpid(), Version: buildinfo.Version(), Connected: s.connected.Load(),
-			Owner: s.settings.Owner, Repliers: len(s.repliers),
+			Owner: s.settings.Owner, Repliers: len(s.repliers), Listeners: s.listenerNames(),
 		}}
 	default:
 		return ipc.Fail(ipc.CodeBadRequest, "unknown operation "+req.Op)

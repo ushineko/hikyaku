@@ -26,6 +26,7 @@ set up by hand.
 - [Setting up the Slack app](#setting-up-the-slack-app)
 - [Running the service](#running-the-service)
 - [Sending and asking](#sending-and-asking)
+- [Listening for instructions](#listening-for-instructions)
 - [Settings](#settings)
 - [Scopes](#scopes)
 - [Security](#security)
@@ -134,6 +135,35 @@ checked later with `inbox`.
 | 3 | The service is not running |
 | 124 | `ask` timed out (as `timeout(1)` does) |
 
+## Listening for instructions
+
+An agent that is already running can wait for you to tell it something
+from Slack:
+
+```bash
+hikyaku listen            # blocks until you write in the DM with the bot
+hikyaku listen --name hayami --timeout 2h
+```
+
+Write in your DM with the bot, outside any thread. The agent prints the
+message, fenced and marked as an instruction typed in Slack, and the
+message's handle on stderr, so it can answer in your message's thread with
+`send --thread` or `ask --thread`. The bot answers in the thread with
+"Picked up." and the listening agent's origin line, so you see which one has
+it. One `listen` takes one instruction; an agent that wants more runs it
+again.
+
+With several agents listening, start the message with a name and a colon:
+`hayami: run the tests` reaches the listener named `hayami` (by default, an
+agent's name is its project's). A message without a name reaches the only
+listener; with several, it reaches none, and the bot answers with the names
+to use. A message nobody is listening for is not kept: the bot answers that
+no agent is listening. `hikyaku status` lists who is listening.
+
+Only allowed users' DMs are instructions. Messages in channels never are,
+and nothing listens unless an agent runs `listen`; hikyaku does not start
+agents.
+
 ## Settings
 
 `~/.config/hikyaku/settings.yaml` (`$XDG_CONFIG_HOME`):
@@ -202,3 +232,5 @@ Go 1.26 or newer.
 - Every message says where it came from (project, branch, host, agent), or
   what `--from` says; a question says to reply in its thread (spec 001).
 - `--thread <handle>` keeps a conversation in one thread (spec 001).
+- `hikyaku listen`: a running agent waits for an instruction typed in the
+  DM with the bot, addressed by name when several listen (spec 005).

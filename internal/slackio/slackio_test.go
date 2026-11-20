@@ -113,21 +113,30 @@ func TestRefusedTokensStopTheListener(t *testing.T) {
 	}
 }
 
-// Only a person's new message inside a thread is a reply.
-func TestOnlyThreadRepliesAreReported(t *testing.T) {
+// A person's new messages are reported, top-level or in a thread, with the
+// kind of conversation they were written in; a bot's are not.
+func TestPeoplesMessagesAreReported(t *testing.T) {
 	f := slacktest.New(t, botToken, appToken)
 	in, _, _, _ := listen(t, f)
 	f.WaitConnected(t)
 
-	f.Reply(t, "D00000001", "", "U00000001", "top level, not a reply")
-	f.Reply(t, "D00000001", "1700000000.000009", "U00000001", "a reply")
-	select {
-	case m := <-in:
-		assert.Equal(t, "a reply", m.Text)
-		assert.Equal(t, "1700000000.000009", m.ThreadTS)
-		assert.Equal(t, "U00000001", m.User)
-	case <-time.After(5 * time.Second):
-		t.Fatal("no reply reported")
+	f.Bot(t, "D00000001", "a bot's message")
+	f.Say(t, "D00000001", "im", "U00000001", "top level")
+	f.Reply(t, "D00000001", "1699999999.000009", "U00000001", "a reply")
+	f.Say(t, "C00000009", "channel", "U00000001", "in a channel")
+	for _, want := range []slackio.Incoming{
+		{Channel: "D00000001", ChannelType: "im", User: "U00000001", Text: "top level"},
+		{Channel: "D00000001", ChannelType: "im", ThreadTS: "1699999999.000009", User: "U00000001", Text: "a reply"},
+		{Channel: "C00000009", ChannelType: "channel", User: "U00000001", Text: "in a channel"},
+	} {
+		select {
+		case m := <-in:
+			assert.NotEmpty(t, m.TS)
+			m.TS = ""
+			assert.Equal(t, want, m)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("not reported: %+v", want)
+		}
 	}
 	select {
 	case m := <-in:

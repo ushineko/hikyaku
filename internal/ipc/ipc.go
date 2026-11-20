@@ -18,6 +18,7 @@ import (
 const (
 	OpSend   = "send"
 	OpWait   = "wait"
+	OpListen = "listen"
 	OpInbox  = "inbox"
 	OpStatus = "status"
 )
@@ -48,6 +49,8 @@ type Request struct {
 	From string `json:"from,omitempty"`
 	// Question marks a message posted by `ask`, which carries a reply hint.
 	Question bool `json:"question,omitempty"`
+	// Name is a listener's name.
+	Name string `json:"name,omitempty"`
 	// Thread is the handle of a message whose thread to post in.
 	Thread  string        `json:"thread,omitempty"`
 	Handle  string        `json:"handle,omitempty"`
@@ -71,6 +74,8 @@ type Status struct {
 	Connected bool   `json:"connected"`
 	Owner     string `json:"owner,omitempty"`
 	Repliers  int    `json:"repliers"`
+	// Listeners are the names of the agents waiting for an instruction.
+	Listeners []string `json:"listeners,omitempty"`
 }
 
 // Fail builds an error response.
