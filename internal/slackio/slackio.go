@@ -1,0 +1,367 @@
+/*
+Package slackio is hikyaku's whole conversation with Slack: posting through
+the Web API, and hearing thread replies over Socket Mode.
+
+Nothing outside this package imports slack-go, so the service and its tests
+see two small interfaces and plain values.
+*/
+package slackio
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
+	"github.com/slack-go/slack/socketmode"
+)
+
+// Status is the outcome a message reports in its header.
+type Status string
+
+// The statuses `send --status` accepts.
+const (
+	StatusNone Status = ""
+	StatusOK   Status = "ok"
+	StatusWarn Status = "warn"
+	StatusFail Status = "fail"
+)
+
+// ParseStatus checks a --status value.
+func ParseStatus(s string) (Status, error) {
+	switch Status(s) {
+	case StatusNone, StatusOK, StatusWarn, StatusFail:
+		return Status(s), nil
+	default:
+		return "", fmt.Errorf("status %q: want ok, warn or fail", s)
+	}
+}
+
+// Outgoing is a message to post.
+type Outgoing struct {
+	Text   string
+	Title  string
+	Status Status
+	// From says where the message came from; it goes on a line under the
+	// message, as plain text.
+	From string
+	// Question adds a line asking for the reply in the message's thread.
+	Question bool
+	// ThreadTS posts the message in that thread instead of starting one.
+	ThreadTS string
+}
+
+// ReplyHint is the line a question carries.
+const ReplyHint = "Reply in this thread to answer."
+
+// Incoming is a message in a thread, as Slack reported it.
+type Incoming struct {
+	Channel  string
+	ThreadTS string
+	TS       string
+	User     string
+	Text     string
+}
+
+// Poster posts messages and opens the DM with a user.
+type Poster interface {
+	OpenDM(ctx context.Context, user string) (channel string, err error)
+	Post(ctx context.Context, channel string, msg Outgoing) (postedChannel, ts string, err error)
+}
+
+// Listener holds the Socket Mode connection and reports thread replies.
+type Listener interface {
+	Listen(ctx context.Context, replies chan<- Incoming, connected func(bool)) error
+}
+
+// Client is the real Poster and Listener.
+type Client struct {
+	api *slack.Client
+	log *slog.Logger
+	// retryMin and retryMax bound the wait between Socket Mode attempts when
+	// slack-go gives up on a connection.
+	retryMin, retryMax time.Duration
+}
+
+// Options configures a Client.
+type Options struct {
+	BotToken string
+	AppToken string
+	// APIURL overrides https://slack.com/api/, for tests. Ends in a slash.
+	APIURL string
+	Log    *slog.Logger
+}
+
+// New builds a Client from the two tokens.
+func New(o Options) *Client {
+	opts := []slack.Option{slack.OptionAppLevelToken(o.AppToken)}
+	if o.APIURL != "" {
+		opts = append(opts, slack.OptionAPIURL(o.APIURL))
+	}
+	log := o.Log
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	return &Client{api: slack.New(o.BotToken, opts...), log: log, retryMin: time.Second, retryMax: 5 * time.Minute}
+}
+
+// OpenDM returns the ID of the bot's DM with user, opening it if needed.
+func (c *Client) OpenDM(ctx context.Context, user string) (string, error) {
+	ch, _, _, err := c.api.OpenConversationContext(ctx, &slack.OpenConversationParameters{Users: []string{user}})
+	if err != nil {
+		return "", fmt.Errorf("open DM with %s: %w", user, err)
+	}
+	return ch.ID, nil
+}
+
+// Post posts msg to channel and returns where it landed.
+func (c *Client) Post(ctx context.Context, channel string, msg Outgoing) (string, string, error) {
+	fallback, blocks := Compose(msg)
+	opts := []slack.MsgOption{slack.MsgOptionText(fallback, false)}
+	if len(blocks) > 0 {
+		opts = append(opts, slack.MsgOptionBlocks(blocks...))
+	}
+	if msg.ThreadTS != "" {
+		opts = append(opts, slack.MsgOptionTS(msg.ThreadTS))
+	}
+	ch, ts, err := c.api.PostMessageContext(ctx, channel, opts...)
+	if err != nil {
+		return "", "", fmt.Errorf("post to %s: %w", channel, err)
+	}
+	return ch, ts, nil
+}
+
+// sectionLimit is Slack's limit on a section block's text.
+const sectionLimit = 3000
+
+// statusEmoji is the emoji a status puts before the title.
+var statusEmoji = map[Status]string{ //nolint:gochecknoglobals // a fixed table
+	StatusOK:   ":white_check_mark:",
+	StatusWarn: ":warning:",
+	StatusFail: ":x:",
+}
+
+// Compose turns a message into the fallback text Slack shows in a
+// notification and, when there is a title, a status, an origin or a reply
+// hint, the blocks that carry them. A message with none of these is plain
+// mrkdwn text. The fallback is always the agent's own words, with the title
+// before them, never the origin or the hint.
+func Compose(m Outgoing) (string, []slack.Block) {
+	foot := footer(m)
+	hasHead := m.Title != "" || m.Status != StatusNone
+	if !hasHead && foot == nil {
+		return m.Text, nil
+	}
+	var blocks []slack.Block
+	fallback := m.Text
+	if hasHead {
+		title := m.Title
+		if title == "" {
+			title = string(m.Status)
+		}
+		head := title
+		if e, ok := statusEmoji[m.Status]; ok {
+			head = e + " " + title
+		}
+		blocks = append(blocks, slack.NewHeaderBlock(slack.NewTextBlockObject(slack.PlainTextType, head, true, false)))
+		fallback = title
+		if m.Text != "" {
+			fallback = title + ": " + m.Text
+		}
+	}
+	for _, part := range split(m.Text, sectionLimit) {
+		blocks = append(blocks, slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, part, false, false), nil, nil))
+	}
+	if foot != nil {
+		blocks = append(blocks, foot)
+	}
+	return fallback, blocks
+}
+
+// fromLimit bounds the origin line; Slack allows 2000 characters in a
+// context element, and an origin is a few words.
+const fromLimit = 200
+
+// footer is the context block under a message: where it came from, and on a
+// question, where to reply. Both are plain text, so an origin cannot mention
+// anyone or carry a link.
+func footer(m Outgoing) *slack.ContextBlock {
+	var els []slack.MixedElement
+	if from := oneLine(m.From, fromLimit); from != "" {
+		els = append(els, slack.NewTextBlockObject(slack.PlainTextType, from, false, false))
+	}
+	if m.Question {
+		els = append(els, slack.NewTextBlockObject(slack.PlainTextType, ReplyHint, false, false))
+	}
+	if els == nil {
+		return nil
+	}
+	return slack.NewContextBlock("", els...)
+}
+
+// oneLine folds s onto one line and cuts it to at most limit runes.
+func oneLine(s string, limit int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:limit-1]) + "…"
+}
+
+// split cuts s into pieces of at most limit bytes, at a line break where
+// there is one, and never inside a UTF-8 sequence.
+func split(s string, limit int) []string {
+	var out []string
+	for len(s) > limit {
+		cut := limit
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		for i := cut; i > limit/2; i-- {
+			if s[i-1] == '\n' {
+				cut = i
+				break
+			}
+		}
+		out = append(out, s[:cut])
+		s = s[cut:]
+	}
+	if s != "" {
+		out = append(out, s)
+	}
+	return out
+}
+
+// ErrAuth is returned by Listen when Slack refuses the tokens; retrying will
+// not help.
+var ErrAuth = errors.New("slack refused the tokens")
+
+// fatalAuth is what slack-go returns when a token is wrong or revoked.
+var fatalAuth = map[string]bool{ //nolint:gochecknoglobals // a fixed table
+	"invalid_auth": true, "account_inactive": true, "not_authed": true, "token_revoked": true,
+}
+
+// Listen holds the Socket Mode connection until ctx is cancelled, sending
+// each thread reply to replies. slack-go reconnects a dropped connection
+// itself; when it gives up, Listen waits and starts again, doubling the wait
+// up to retryMax. It returns ErrAuth, wrapped, when the tokens are refused.
+func (c *Client) Listen(ctx context.Context, replies chan<- Incoming, connected func(bool)) error {
+	wait := c.retryMin
+	for {
+		err := c.listenOnce(ctx, replies, connected)
+		connected(false)
+		if ctx.Err() != nil {
+			return nil //nolint:nilerr // a cancelled context is the caller asking to stop, not a failure
+		}
+		if errors.Is(err, ErrAuth) {
+			return err
+		}
+		c.log.Warn("socket mode connection ended; retrying", "err", err, "in", wait)
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return nil
+		case <-t.C:
+		}
+		wait = min(wait*2, c.retryMax)
+	}
+}
+
+func (c *Client) listenOnce(ctx context.Context, replies chan<- Incoming, connected func(bool)) error {
+	sm := socketmode.New(c.api)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	authFailed := make(chan struct{}, 1)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case evt, ok := <-sm.Events:
+				if !ok {
+					return
+				}
+				c.event(ctx, sm, evt, replies, connected, authFailed)
+			}
+		}
+	}()
+	err := sm.RunContext(ctx)
+	select {
+	case <-authFailed:
+		return fmt.Errorf("%w", ErrAuth)
+	default:
+	}
+	if err != nil && fatalAuth[err.Error()] {
+		return fmt.Errorf("%w: %s", ErrAuth, err.Error())
+	}
+	if err != nil {
+		return fmt.Errorf("socket mode: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) event(ctx context.Context, sm *socketmode.Client, evt socketmode.Event, replies chan<- Incoming,
+	connected func(bool), authFailed chan<- struct{}) {
+	switch evt.Type {
+	case socketmode.EventTypeConnected:
+		connected(true)
+		c.log.Info("connected to slack")
+	case socketmode.EventTypeConnecting, socketmode.EventTypeConnectionError, socketmode.EventTypeDisconnect:
+		connected(false)
+	case socketmode.EventTypeInvalidAuth:
+		select {
+		case authFailed <- struct{}{}:
+		default:
+		}
+	case socketmode.EventTypeEventsAPI:
+		if evt.Request != nil {
+			if err := sm.AckCtx(ctx, evt.Request.EnvelopeID, nil); err != nil {
+				c.log.Debug("ack", "err", err)
+			}
+		}
+		api, ok := evt.Data.(slackevents.EventsAPIEvent)
+		if !ok {
+			return
+		}
+		logEvent(c.log, api)
+		if in, ok := threadReply(api); ok {
+			select {
+			case replies <- in:
+			case <-ctx.Done():
+			}
+		}
+	}
+}
+
+// threadReply picks out a person's new message in a thread. Edits, deletions,
+// bot messages (our own included) and top-level messages are not replies.
+func threadReply(api slackevents.EventsAPIEvent) (Incoming, bool) {
+	m, ok := api.InnerEvent.Data.(*slackevents.MessageEvent)
+	if !ok || m.SubType != "" || m.BotID != "" || m.User == "" {
+		return Incoming{}, false
+	}
+	if m.ThreadTimeStamp == "" || m.ThreadTimeStamp == m.TimeStamp {
+		return Incoming{}, false
+	}
+	return Incoming{Channel: m.Channel, ThreadTS: m.ThreadTimeStamp, TS: m.TimeStamp, User: m.User, Text: m.Text}, true
+}
+
+// logEvent records at debug level what kind of event arrived, so a reply
+// that never reaches an agent can be traced. It logs no text and no user.
+func logEvent(log *slog.Logger, api slackevents.EventsAPIEvent) {
+	m, ok := api.InnerEvent.Data.(*slackevents.MessageEvent)
+	if !ok {
+		log.Debug("slack event", "type", api.InnerEvent.Type)
+		return
+	}
+	log.Debug("slack event", "type", api.InnerEvent.Type, "subtype", m.SubType,
+		"channel_type", m.ChannelType, "in_thread", m.ThreadTimeStamp != "" && m.ThreadTimeStamp != m.TimeStamp,
+		"from_bot", m.BotID != "")
+}

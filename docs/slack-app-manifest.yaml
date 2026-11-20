@@ -1,0 +1,34 @@
+# The Slack app hikyaku talks through. Create it at
+# https://api.slack.com/apps -> Create New App -> From a manifest, and paste
+# this file. Every scope is listed in README.md with the reason for it; a
+# test holds the two lists together.
+display_information:
+  name: hikyaku
+  description: Carries messages between your coding agents and you.
+features:
+  bot_user:
+    display_name: hikyaku
+    always_online: true
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - im:write
+      - im:history
+      - channels:history
+      - groups:history
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.im
+      - message.channels
+      - message.groups
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

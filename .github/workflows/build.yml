@@ -1,0 +1,44 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Nothing by default; each job says what it needs. Actions are pinned by
+# commit, not by tag, which whoever controls an Action's repository can move;
+# Dependabot keeps the pins current.
+permissions: {}
+
+# The newest patch release of this line, looked up on each run. go.mod's `go`
+# line is the minimum the code needs.
+env:
+  GO_VERSION: "1.27.x"
+
+jobs:
+  test:
+    name: Test and lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      - name: No binaries in the repository
+        run: make check-no-binaries
+
+      # The fake Slack in internal/slacktest stands in for Slack; no token
+      # reaches CI.
+      - name: Test
+        run: go test -race ./...
+
+      - name: Lint
+        run: make lint
+
+      - name: Build
+        run: make build

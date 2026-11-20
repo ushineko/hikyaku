@@ -1,0 +1,49 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gocritic
+    - gosec
+    - misspell
+    - nilerr
+    - noctx
+    - revive
+    - unconvert
+    - wrapcheck
+  settings:
+    gosec:
+      # G304 (file inclusion via variable): every path hikyaku opens is built
+      # from the XDG base directories, which are variables by definition.
+      excludes:
+        - G304
+    wrapcheck:
+      # Errors crossing between this module's own packages carry their context
+      # already; wrapping them again produces messages like "open store: open
+      # store: ...". wrapcheck stays on for genuinely external errors, which is
+      # where the missing context actually hurts.
+      ignore-package-globs:
+        - github.com/ushineko/hikyaku/*
+      ignore-sigs:
+        - .Errorf(
+        - errors.New(
+        - errors.Unwrap(
+        - errors.Join(
+        - .Wrap(
+        - .Wrapf(
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - wrapcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
