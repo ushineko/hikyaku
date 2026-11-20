@@ -46,7 +46,7 @@ func TestAConversationStaysInOneThread(t *testing.T) {
 	assert.Contains(t, out, "\nstaging, please\n")
 	root := h.fake.Posts()[0]
 	assert.Empty(t, root.ThreadTS)
-	assert.Equal(t, []string{h.origin, "Reply in this thread to answer."}, footer(root))
+	assert.Equal(t, []string{h.origin + " · Reply in this thread to answer."}, footer(root))
 	rootTS := h.fake.LastTS() // the posted question's ts; a reply does not change it
 
 	second, out := askAndAnswer(t, h, 2, rootTS, "yes", "--thread", first, "staging is green. production too?")

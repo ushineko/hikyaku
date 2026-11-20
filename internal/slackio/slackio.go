@@ -188,20 +188,21 @@ func Compose(m Outgoing) (string, []slack.Block) {
 const fromLimit = 200
 
 // footer is the context block under a message: where it came from, and on a
-// question, where to reply. Both are plain text, so an origin cannot mention
-// anyone or carry a link.
+// question, where to reply. It is one plain-text element, so an origin
+// cannot mention anyone or carry a link, and a copied message reads as one
+// line: Slack joins separate elements with a bare space when copying.
 func footer(m Outgoing) *slack.ContextBlock {
-	var els []slack.MixedElement
+	var parts []string
 	if from := oneLine(m.From, fromLimit); from != "" {
-		els = append(els, slack.NewTextBlockObject(slack.PlainTextType, from, false, false))
+		parts = append(parts, from)
 	}
 	if m.Question {
-		els = append(els, slack.NewTextBlockObject(slack.PlainTextType, ReplyHint, false, false))
+		parts = append(parts, ReplyHint)
 	}
-	if els == nil {
+	if parts == nil {
 		return nil
 	}
-	return slack.NewContextBlock("", els...)
+	return slack.NewContextBlock("", slack.NewTextBlockObject(slack.PlainTextType, strings.Join(parts, " · "), false, false))
 }
 
 // oneLine folds s onto one line and cuts it to at most limit runes.

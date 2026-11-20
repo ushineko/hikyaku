@@ -262,6 +262,7 @@ service `serve --headless --debug` on Linux, 2026-11-19 and 2026-11-20.
 | 5 Messages that are not replies | Pass: a top-level DM and the bot's own post arrived as events and were not taken as replies |
 | 6 Three-turn conversation with `--thread` | Pass: all three questions in one thread, each reply recorded under its own question's handle. Feedback that a follow-up need not repeat the grey line was taken into R15 |
 | 7 `ask` timing out | Pass: exit 124, handle and `inbox` hint on stderr |
+| 8 Copying a message out of Slack | The origin line is copied with the text, and its two parts ran together ("…Claude Code Reply in this thread…"); the line is now one element joined by " · ". `--from ""` leaves it out of a message meant for copying |
 
 ### Prod visibility
 

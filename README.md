@@ -100,7 +100,8 @@ git repository's name, also from inside a worktree), the branch, the host and
 the agent, as in `hikyaku · feat/x · workstation · Claude Code`. `--from
 "nightly build"` puts other text there, and `--from ""` leaves the line out,
 so the message is the text alone. The line is plain text and names no path.
-In a channel, everyone there sees it.
+It is copied along with the message, so leave it out of a message meant to
+be pasted elsewhere. In a channel, everyone there sees it.
 
 A question from `ask` also says "Reply in this thread to answer." Only a
 reply in the thread reaches the agent: a message typed into the DM itself is

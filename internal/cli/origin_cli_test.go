@@ -57,7 +57,7 @@ func TestEveryMessageSaysWhereItCameFrom(t *testing.T) {
 
 	go func() { _, _, _ = h.run("", "ask", "--timeout", "1s", "continue?") }()
 	p = h.waitPosts(4)[3]
-	assert.Equal(t, []string{h.origin, "Reply in this thread to answer."}, footer(p))
+	assert.Equal(t, []string{h.origin + " · Reply in this thread to answer."}, footer(p))
 	assert.Equal(t, "continue?", p.Text)
 }
 
