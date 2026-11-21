@@ -172,7 +172,10 @@ answer.
   there whatever the allow-list says; this was found by listing a run's
   tools, not assumed.
 - The allow-list names read-only commands by prefix (`glab mr view`, never
-  `glab api` or `glab mr merge`) and file reads under `~/git`. It holds no
+  `glab api` or `glab mr merge`), `git tag --list` and `git describe` (git
+  refuses to delete or make a tag alongside `--list`, checked; making and
+  deleting a tag are denied against real Claude Code), and file reads under
+  `~/git`. It holds no
   tool that writes, edits, pushes or posts, and no `WebFetch`, `WebSearch`
   or `curl`. MCP servers come only from `answerer.mcp_config`
   (`--strict-mcp-config`), and only their read tools are allowed. The run

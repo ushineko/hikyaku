@@ -226,7 +226,8 @@ of those tools:
 - `glab` and `gh`: listing and viewing MRs/PRs, CI, releases and issues;
 - Jira's read tools, through the Atlassian MCP server, when
   `answerer.mcp_config` names a configuration for it;
-- `git log`, `git show` and `git status`, and reading files under `~/git`.
+- `git log`, `git show`, `git status`, `git tag --list` and `git describe`,
+  and reading files under `~/git`.
 
 Anything else it tries is denied without a prompt. Files that hold
 credentials (`.env*`, `*.key`, `*.pem`, SSH keys, `.netrc`,
@@ -354,6 +355,9 @@ Go 1.26 or newer.
 ## Changelog
 
 ### Unreleased
+
+- The answerer can list a repository's tags (`git tag --list`,
+  `git describe`), so "what's the latest release?" works from the tags.
 
 - A persona file (`SOUL.md`) gives the bot a name, the voice the answerer
   writes in, and varied notes with the occasional strange emoji or aside;

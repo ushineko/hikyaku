@@ -87,6 +87,8 @@ func DefaultAllowedTools() []string {
 	tools := []string{
 		"Read(~/git/**)", "Grep(~/git/**)", "Glob(~/git/**)",
 		"Bash(git log:*)", "Bash(git show:*)", "Bash(git status:*)",
+		// Listing only: git refuses -d, -a and -f alongside --list.
+		"Bash(git tag --list:*)", "Bash(git tag -l:*)", "Bash(git describe:*)",
 	}
 	for _, c := range []string{
 		"glab mr list", "glab mr view", "glab ci status", "glab ci list", "glab ci get",
