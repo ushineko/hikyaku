@@ -8,6 +8,7 @@ see two small interfaces and plain values.
 package slackio
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -111,6 +112,8 @@ type Poster interface {
 	// Thread is the messages of the thread rooted at ts, oldest first, at
 	// most the last 50.
 	Thread(ctx context.Context, channel, ts string) ([]ThreadMessage, error)
+	// Upload shares a file in channel, in the thread at threadTS when set.
+	Upload(ctx context.Context, channel, threadTS, filename, title string, data []byte) error
 }
 
 // ThreadMessage is one message of a thread; Bot marks one a bot posted.
@@ -262,6 +265,21 @@ func (c *Client) Thread(ctx context.Context, channel, ts string) ([]ThreadMessag
 		out = out[len(out)-50:]
 	}
 	return out, nil
+}
+
+// Upload shares a file (files:write), with Slack's three-step upload.
+func (c *Client) Upload(ctx context.Context, channel, threadTS, filename, title string, data []byte) error {
+	_, err := c.api.UploadFileContext(ctx, slack.UploadFileParameters{
+		Reader: bytes.NewReader(data), FileSize: len(data), Filename: filename, Title: title,
+		Channel: channel, ThreadTimestamp: threadTS,
+	})
+	switch {
+	case err == nil:
+		return nil
+	case strings.Contains(err.Error(), "missing_scope"):
+		return fmt.Errorf("upload %s: %w", filename, ErrMissingScope)
+	}
+	return fmt.Errorf("upload %s: %w", filename, err)
 }
 
 // Self is the bot's own user ID, from auth.test, which needs no scope.

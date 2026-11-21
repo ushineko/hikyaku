@@ -34,6 +34,7 @@ an agent; S6 states how far.
 | S5 | Supply chain | Go modules, CI Actions, releases |
 | S6 | The answerer | The owner's question, into a Claude Code run; its answer, back to Slack |
 | S7 | Roles and channels | Questions from admins and listed users, in channels and DMs; answers back to them |
+| S8 | Drawing a chart | A diagram a run wrote, into a boxed renderer; a PNG back |
 
 ## S1 Credentials
 
@@ -219,7 +220,8 @@ answer.
 - Off by default. `hikyaku answerer on|off` switches it over the local
   socket (S2); nothing from Slack can. `off` ends a running run.
 - Limits: one run at a time, three waiting, five minutes and $0.50 a run
-  (`--max-budget-usd`), $5 a day.
+  (`--max-budget-usd`). Admins have no daily cap (owner's decision,
+  2026-11-20); users share $5 a day and have $1 each (S7).
 - The persona's voice (spec 008) goes into the prompt after the rules,
   fenced with a nonce and labelled as the owner's style guidance, with the
   rules winning. The file is the owner's, in their config directory, so it
@@ -261,7 +263,8 @@ answer.
   ordinary name is readable, and only the scrubber stands between it and
   the DM.
 - The runs use the owner's Claude Code login, with no spending limit at the
-  account level; hikyaku's caps are the only limit.
+  account level; hikyaku's caps are the only limit, and an admin's
+  spending is bounded only per run and by the queue (one run at a time).
 - A link in an answer can still be clicked by the owner.
 
 ## S7 Roles and channels
@@ -318,6 +321,48 @@ messages it receives.
   as in S6; the off switch still applies.
 - The bot receives every message in a channel it is in. It keeps only its
   own threads' exchanges, in memory.
+
+## S8 Drawing a chart
+
+Spec 011. A run may write a Mermaid diagram; the service draws it with
+`mmdc` (Node and headless Chromium) and attaches the PNG. The renderer is a
+browser engine running a JavaScript library over text a model wrote, and a
+source the run read may have steered that text.
+
+**What is at stake.** The machine, if a Mermaid or Chromium bug is reachable
+from the input; data leaving, if the renderer can reach the network; and
+what the chart says, which can carry what an answer can.
+
+**Defences.**
+
+- The renderer runs in a bubblewrap box: its own user, network, PID, IPC
+  and UTS namespaces (`--unshare-all`; no network, loopback included), a
+  read-only system, a private `/tmp`, the owner's home directory and
+  `/run` (keyring, hikyaku's socket) behind empty mounts, an empty
+  environment but `PATH` and `HOME=/tmp`, one writable folder,
+  `--die-with-parent` and `--new-session`. The system's Node runs the
+  system's `mmdc`.
+- Mermaid's `securityLevel: strict`, from a config file the service writes;
+  `%%{init}%%` directives are removed from the input, so it cannot loosen
+  that.
+- Limits: 20 KB in, two charts an answer, 30 seconds a render (then the
+  process group is killed), 5 MB out, which must be a PNG.
+- The diagram is taken from the answer after it is scrubbed (S6's
+  secrets and contact details, S7's paths), so what is drawn is clean.
+- Without the box or the renderer, or when a render fails, the diagram is
+  posted as code; nothing is drawn unboxed.
+- Checked against the real renderer: a diagram whose labels, click link
+  and style point at a listener on the machine draws a PNG with nothing
+  reaching the listener, where the same diagram drawn unboxed in Mermaid's
+  loose mode reaches it; a probe run in the box cannot read a file in the
+  home directory, see `/run/user` or open a connection, and has only
+  `PATH`, `HOME`, `PWD` in its environment.
+
+**Residual risk.** A renderer bug reached from the input runs in the box: it
+can read world-readable system files, write its own folder, and reach no
+network. The box needs unprivileged user namespaces; without them, charts
+are off, not unboxed. `mmdc` and Chromium are the system's packages,
+updated with it.
 
 ## Checked
 

@@ -11,6 +11,7 @@ package slacktest
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -79,7 +80,13 @@ type Fake struct {
 	private       map[string]bool
 	// threads are the messages of each thread, root first, as
 	// conversations.replies answers them.
-	threads   map[string][]map[string]any
+	threads map[string][]map[string]any
+	// uploads are the files shared, with their bytes; pending are the
+	// bytes received for a file not yet completed; noFiles makes uploads
+	// answer missing_scope.
+	uploads   []Upload
+	pending   map[string][]byte
+	noFiles   bool
 	connected chan struct{}
 }
 
@@ -98,6 +105,9 @@ func New(t *testing.T, botToken, appToken string) *Fake {
 	mux.HandleFunc("/api/conversations.join", f.conversation(true))
 	mux.HandleFunc("/api/conversations.leave", f.conversation(false))
 	mux.HandleFunc("/api/conversations.replies", f.replies)
+	mux.HandleFunc("/api/files.getUploadURLExternal", f.uploadURL)
+	mux.HandleFunc("/upload/", f.uploadBytes)
+	mux.HandleFunc("/api/files.completeUploadExternal", f.completeUpload)
 	mux.HandleFunc("/ws", f.websocket)
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.Close)
@@ -198,6 +208,81 @@ func (f *Fake) reaction(removed bool) http.HandlerFunc {
 		})
 		reply(w, map[string]any{"ok": true})
 	}
+}
+
+// Upload is one file shared through the fake.
+type Upload struct {
+	Channel, ThreadTS, Title string
+	Data                     []byte
+}
+
+func (f *Fake) uploadURL(w http.ResponseWriter, r *http.Request) {
+	if bearer(r) != f.botToken {
+		reply(w, map[string]any{"ok": false, "error": "invalid_auth"})
+		return
+	}
+	_ = r.ParseForm()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.noFiles {
+		reply(w, map[string]any{"ok": false, "error": "missing_scope", "needed": "files:write"})
+		return
+	}
+	f.seq++
+	id := fmt.Sprintf("F%08d", f.seq)
+	if f.pending == nil {
+		f.pending = map[string][]byte{}
+	}
+	f.pending[id] = nil
+	reply(w, map[string]any{"ok": true, "upload_url": f.srv.URL + "/upload/" + id, "file_id": id})
+}
+
+func (f *Fake) uploadBytes(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/upload/")
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer func() { _ = file.Close() }()
+	b, _ := io.ReadAll(file)
+	f.mu.Lock()
+	f.pending[id] = b
+	f.mu.Unlock()
+	_, _ = w.Write([]byte("OK"))
+}
+
+func (f *Fake) completeUpload(w http.ResponseWriter, r *http.Request) {
+	if bearer(r) != f.botToken {
+		reply(w, map[string]any{"ok": false, "error": "invalid_auth"})
+		return
+	}
+	_ = r.ParseForm()
+	var files []struct{ ID, Title string }
+	_ = json.Unmarshal([]byte(r.Form.Get("files")), &files)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, fl := range files {
+		f.uploads = append(f.uploads, Upload{
+			Channel: r.Form.Get("channel_id"), ThreadTS: r.Form.Get("thread_ts"), Title: fl.Title, Data: f.pending[fl.ID],
+		})
+	}
+	reply(w, map[string]any{"ok": true, "files": []map[string]any{}})
+}
+
+// Uploads returns the files shared so far.
+func (f *Fake) Uploads() []Upload {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Upload(nil), f.uploads...)
+}
+
+// NoFileScope makes uploads answer missing_scope, as for an app installed
+// without files:write.
+func (f *Fake) NoFileScope() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.noFiles = true
 }
 
 func (f *Fake) replies(w http.ResponseWriter, r *http.Request) {

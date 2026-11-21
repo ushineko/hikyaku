@@ -189,7 +189,7 @@ func TestAUsersDayIsCapped(t *testing.T) {
 	ts = h.fake.Say(t, channel, "channel", owner, mentioned+"admins are not capped per user")
 	h.reactedWith(ts, "white_check_mark")
 	_, out, _ := h.run("", "status")
-	assert.Contains(t, out, "$1.80 of $5.00 spent today ($1.20 by users)")
+	assert.Contains(t, out, "$1.80 spent today, $1.20 of $5.00 by users")
 	_, out, _ = h.run("", "users")
 	assert.Contains(t, out, user+"  user, channels only; $1.20 today")
 }

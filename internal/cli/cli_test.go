@@ -19,6 +19,7 @@ import (
 	"github.com/ushineko/hikyaku/internal/answerer"
 	"github.com/ushineko/hikyaku/internal/cli"
 	"github.com/ushineko/hikyaku/internal/secret"
+	"github.com/ushineko/hikyaku/internal/service"
 	"github.com/ushineko/hikyaku/internal/slacktest"
 )
 
@@ -63,6 +64,7 @@ type harness struct {
 	// runner stands in for the answerer's Claude Code runs; now, when
 	// set, is the service's clock.
 	runner, plainRunner answerer.Runner
+	charts              service.Charter
 	now                 func() time.Time
 }
 
@@ -122,7 +124,7 @@ func (h *harness) serve() {
 		IsTerminal: func() bool { return false },
 		SocketPath: h.socket, SettingsPath: h.settings, StatePath: h.state,
 		Secrets: h.tokens, APIURL: h.fake.APIURL(),
-		Runner: h.runner, PlainRunner: h.plainRunner, Now: h.now,
+		Runner: h.runner, PlainRunner: h.plainRunner, Charts: h.charts, Now: h.now,
 	}
 	go func() { done <- cli.Execute(ctx, env, []string{"serve", "--headless"}) }()
 	h.fake.WaitConnected(h.t)

@@ -52,10 +52,8 @@ func answererLine(a ipc.AnswererStatus) string {
 	return strings.Join(parts, ", ") + spentLine(a)
 }
 
+// spentLine is today's spending: all of it, and users' against their cap
+// (admins have none).
 func spentLine(a ipc.AnswererStatus) string {
-	s := fmt.Sprintf("; $%.2f of $%.2f spent today", a.Spent, a.Cap)
-	if a.UsersSpent > 0 {
-		s += fmt.Sprintf(" ($%.2f by users)", a.UsersSpent)
-	}
-	return s
+	return fmt.Sprintf("; $%.2f spent today, $%.2f of $%.2f by users", a.Spent, a.UsersSpent, a.Cap)
 }
