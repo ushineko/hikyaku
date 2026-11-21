@@ -88,11 +88,23 @@ type Incoming struct {
 // InDM reports whether the message was written in a DM with the bot.
 func (m Incoming) InDM() bool { return m.ChannelType == "im" }
 
-// Poster posts messages and opens the DM with a user.
+// Poster posts messages, reacts to them, and opens the DM with a user.
 type Poster interface {
 	OpenDM(ctx context.Context, user string) (channel string, err error)
 	Post(ctx context.Context, channel string, msg Outgoing) (postedChannel, ts string, err error)
+	// React adds the emoji (a name, without colons) to the message at ts;
+	// Unreact takes it off. Adding one already there, or taking off one
+	// that is not, is not an error.
+	React(ctx context.Context, channel, ts, emoji string) error
+	Unreact(ctx context.Context, channel, ts, emoji string) error
+	// Me posts text as a /me message, top-level in channel.
+	Me(ctx context.Context, channel, text string) error
 }
+
+// ErrMissingScope is wrapped by an error from a call the app's token has no
+// scope for, such as React before the app is reinstalled with
+// reactions:write.
+var ErrMissingScope = errors.New("missing scope")
 
 // Listener holds the Socket Mode connection and reports people's new
 // messages.
@@ -158,6 +170,39 @@ func (c *Client) Post(ctx context.Context, channel string, msg Outgoing) (string
 		return "", "", fmt.Errorf("post to %s: %w", channel, err)
 	}
 	return ch, ts, nil
+}
+
+// React adds a reaction.
+func (c *Client) React(ctx context.Context, channel, ts, emoji string) error {
+	err := c.api.AddReactionContext(ctx, emoji, slack.ItemRef{Channel: channel, Timestamp: ts})
+	return reactionErr("add reaction", err, "already_reacted")
+}
+
+// Unreact removes a reaction.
+func (c *Client) Unreact(ctx context.Context, channel, ts, emoji string) error {
+	err := c.api.RemoveReactionContext(ctx, emoji, slack.ItemRef{Channel: channel, Timestamp: ts})
+	return reactionErr("remove reaction", err, "no_reaction")
+}
+
+// reactionErr is nil for err and for Slack's answer that the change was
+// already so (harmless), and wraps ErrMissingScope when the token lacks
+// the scope.
+func reactionErr(what string, err error, harmless string) error {
+	switch {
+	case err == nil, strings.Contains(err.Error(), harmless):
+		return nil
+	case strings.Contains(err.Error(), "missing_scope"):
+		return fmt.Errorf("%s: %w", what, ErrMissingScope)
+	}
+	return fmt.Errorf("%s: %w", what, err)
+}
+
+// Me posts a /me message.
+func (c *Client) Me(ctx context.Context, channel, text string) error {
+	if _, _, err := c.api.PostMessageContext(ctx, channel, slack.MsgOptionMeMessage(), slack.MsgOptionText(text, false)); err != nil {
+		return fmt.Errorf("post /me to %s: %w", channel, err)
+	}
+	return nil
 }
 
 // sectionLimit is Slack's limit on a section block's text.
@@ -365,12 +410,12 @@ func (c *Client) event(ctx context.Context, sm *socketmode.Client, evt socketmod
 	}
 }
 
-// personMessage picks out a person's new message. Edits, deletions and bot
-// messages (our own included) are not passed on. A message that starts a
-// thread is reported as top-level.
+// personMessage picks out a person's new message, a /me included. Edits,
+// deletions and bot messages (our own included) are not passed on. A
+// message that starts a thread is reported as top-level.
 func personMessage(api slackevents.EventsAPIEvent) (Incoming, bool) {
 	m, ok := api.InnerEvent.Data.(*slackevents.MessageEvent)
-	if !ok || m.SubType != "" || m.BotID != "" || m.User == "" {
+	if !ok || (m.SubType != "" && m.SubType != "me_message") || m.BotID != "" || m.User == "" {
 		return Incoming{}, false
 	}
 	thread := m.ThreadTimeStamp

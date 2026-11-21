@@ -74,7 +74,9 @@ as a command for the purpose of deciding who may send one.
   empty) are heard. A reply from anyone else, in one of hikyaku's threads, is
   dropped and logged by user ID; its text is not stored or logged.
 - Only new messages from people, in a thread hikyaku started, count. Edits,
-  deletions, bot messages and top-level messages are ignored.
+  deletions, bot messages and top-level messages are ignored. A `/me` from
+  a person counts like any message and passes the same allow-list; a `/me`
+  from a bot, the service's own included, is ignored (spec 006).
 - Reply text is given to the agent fenced and labelled as text from Slack,
   with its author and time, in text and in JSON, so an agent can tell it from
   its own instructions. Each fence carries a random nonce in both markers,
@@ -89,6 +91,16 @@ as a command for the purpose of deciding who may send one.
   unless an agent chose to, one `listen` takes one instruction, and an
   instruction nobody takes is answered and dropped, never kept for later.
   The text is fenced with a nonce and labelled as typed in Slack.
+- Since spec 006, a listener's name is held after each `listen` (30
+  minutes by default, at most 24 hours), and an instruction for a held
+  listener waits for its next `listen`. So an instruction can be acted on
+  up to the hold after it was typed, not only at once. The ⏳ reaction says
+  it is waiting, the instruction carries the time it was typed, and the
+  queue is in memory only, ten per listener, holding only allowed users'
+  text. A top-level message can also answer an agent's `ask --reply-to`;
+  it passes the same allow-list.
+- The bot adds reactions (`reactions:write`) to messages in the DM it was
+  given, to show what happened to them. It reacts to nothing else.
 - hikyaku starts no agent except in one mode, the answerer (S6), which is
   off until the owner switches it on at the desktop, starts only read-only
   runs, and answers only the owner. A chat message that can start work on

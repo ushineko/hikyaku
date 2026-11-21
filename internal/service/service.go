@@ -40,11 +40,24 @@ type Service struct {
 	now      func() time.Time
 
 	connected atomic.Bool
+	// noReactions is set once Slack has said the app lacks reactions:write.
+	noReactions atomic.Bool
+	// bg is the context for work that outlives a request: hold timers and
+	// the notes they post. Run replaces it with its own.
+	bg context.Context
 
 	mu        sync.Mutex
 	waiters   map[string][]chan store.Reply
 	listeners map[string]*listener
 	dm        string
+	// instrs are the instructions handed to listeners, by handle (spec 006).
+	instrs map[string]*instr
+	// owners is the listener an instruction, or a message posted top-level
+	// with --reply-to on one, belongs to, by handle.
+	owners map[string]string
+	// convo is, per listener, the handle of a question asked top-level
+	// with --reply-to whose answer is the listener's next message (R6).
+	convo map[string]string
 
 	// desk is the answerer (spec 007); nil when the service has none.
 	desk *desk
@@ -81,6 +94,8 @@ func New(d Deps) (*Service, error) {
 		poster: d.Poster, listener: d.Listener, store: d.Store, settings: d.Settings,
 		repliers: d.Settings.Repliers(), log: d.Log, redact: d.Redact, now: d.Now,
 		waiters: map[string][]chan store.Reply{}, listeners: map[string]*listener{},
+		instrs: map[string]*instr{}, owners: map[string]string{}, convo: map[string]string{},
+		bg: context.Background(),
 	}
 	if d.Runner != nil {
 		desk, err := newDesk(d.Runner, d.Settings.Answerer, d.AnswererState)
@@ -98,6 +113,9 @@ func (s *Service) Run(ctx context.Context) error {
 	if len(s.repliers) == 0 {
 		s.log.Warn("no owner and no allowed_repliers in the settings: no reply will reach an agent")
 	}
+	s.mu.Lock()
+	s.bg = ctx
+	s.mu.Unlock()
 	in := make(chan slackio.Incoming, 16)
 	errc := make(chan error, 1)
 	go func() { errc <- s.listener.Listen(ctx, in, s.connected.Store) }()
@@ -132,19 +150,31 @@ func (s *Service) reply(ctx context.Context, m slackio.Incoming) {
 		return
 	}
 	r := store.Reply{User: m.User, Text: m.Text, TS: m.TS, At: s.now().UTC()}
+	if !s.deliverReply(handle, r) {
+		s.offerFollowUp(ctx, m.Channel, m.ThreadTS, m.User, m.Text)
+	}
+}
+
+// deliverReply records a reply to the message with the handle and wakes
+// whoever waits on it. It reports whether anyone did. A conversation whose
+// question it answers is over (spec 006, R6).
+func (s *Service) deliverReply(handle string, r store.Reply) bool {
 	if err := s.store.AddReply(handle, r); err != nil {
 		s.log.Error("record reply", "handle", handle, "err", err)
 	}
 	s.mu.Lock()
 	ws := s.waiters[handle]
 	delete(s.waiters, handle)
+	for name, q := range s.convo {
+		if q == handle {
+			delete(s.convo, name)
+		}
+	}
 	s.mu.Unlock()
 	for _, w := range ws {
 		w <- r // buffered, one per waiter
 	}
-	if len(ws) == 0 {
-		s.offerFollowUp(ctx, m.Channel, m.ThreadTS, m.User, m.Text)
-	}
+	return len(ws) > 0
 }
 
 // Handle answers one CLI request.
@@ -163,9 +193,10 @@ func (s *Service) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 	case ipc.OpInbox:
 		return s.inbox(req)
 	case ipc.OpStatus:
+		names, states := s.listenerStates()
 		return ipc.Response{OK: true, Status: &ipc.Status{
 			PID: os.Getpid(), Version: buildinfo.Version(), Connected: s.connected.Load(),
-			Owner: s.settings.Owner, Repliers: len(s.repliers), Listeners: s.listenerNames(),
+			Owner: s.settings.Owner, Repliers: len(s.repliers), Listeners: names, ListenerStates: states,
 			Answerer: s.answerStatus(),
 		}}
 	case ipc.OpAnswerer:
@@ -183,43 +214,90 @@ func (s *Service) send(ctx context.Context, req ipc.Request) (string, ipc.Respon
 	if strings.TrimSpace(req.Text) == "" && req.Title == "" {
 		return "", ipc.Fail(ipc.CodeBadRequest, "nothing to send: give text or a title")
 	}
-	channel, thread, resp := s.where(ctx, req)
+	channel, thread, target, resp := s.where(ctx, req)
 	if channel == "" {
 		return "", resp
 	}
 	posted, ts, err := s.poster.Post(ctx, channel, slackio.Outgoing{
-		Text: req.Text, Title: req.Title, Status: status, From: req.From, Question: req.Question,
+		Text: req.Text, Title: req.Title, Status: status, From: req.From,
+		Question: req.Question && target == nil,
 		ThreadTS: thread,
 	})
 	if err != nil {
 		return "", s.slackFail(err)
 	}
-	h, err := s.store.Add(posted, ts, thread)
+	var h string
+	if target != nil && target.TopLevel {
+		h, err = s.store.AddTopLevel(posted, ts)
+	} else {
+		h, err = s.store.Add(posted, ts, thread)
+	}
 	if err != nil {
 		s.log.Error("record message", "err", err)
 		return "", ipc.Fail(ipc.CodeInternal, "the message was posted but could not be recorded: "+s.redact.String(err.Error()))
 	}
+	if target != nil {
+		s.answeredBy(target, h, req)
+	}
 	return h, ipc.Response{}
 }
 
-// where is the channel a message goes to and, for --thread, the thread in
-// it: the thread of the message with that handle, in that message's channel.
-func (s *Service) where(ctx context.Context, req ipc.Request) (channel, thread string, resp ipc.Response) {
-	if req.Thread == "" {
+// answeredBy notes that the message h answers target (spec 006): ✅ on an
+// instruction answered for the first time, and, for a message posted
+// top-level beside it, the listener it belongs to and, for a question,
+// that the listener's next message is its answer (R6).
+func (s *Service) answeredBy(target *store.Message, h string, req ipc.Request) {
+	s.answered(target.Handle)
+	if !target.TopLevel {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owner := s.owners[target.Handle]
+	if owner == "" {
+		return
+	}
+	s.owners[h] = owner
+	if req.Question {
+		s.convo[owner] = h
+	}
+}
+
+// where is the channel a message goes to and the thread in it, if any. For
+// --thread, the thread of the message with that handle, in its channel; for
+// --reply-to, beside the message when it is top-level (an instruction, or a
+// message posted beside one), in its thread otherwise. target is that
+// message.
+func (s *Service) where(ctx context.Context, req ipc.Request) (channel, thread string, target *store.Message,
+	resp ipc.Response) {
+	h := req.Thread
+	switch {
+	case req.Thread != "" && req.ReplyTo != "":
+		return "", "", nil, ipc.Fail(ipc.CodeBadRequest, "give --reply-to or --thread, not both")
+	case req.ReplyTo != "":
+		h = req.ReplyTo
+	case req.Thread == "":
 		channel, resp = s.destination(ctx, req.Channel)
-		return channel, "", resp
+		return channel, "", nil, resp
 	}
 	if req.Channel != "" {
-		return "", "", ipc.Fail(ipc.CodeBadRequest, "give --thread or --channel, not both: the thread decides the channel")
+		return "", "", nil, ipc.Fail(ipc.CodeBadRequest,
+			"give --thread or --reply-to, or --channel, not both: the message answered decides the channel")
 	}
-	m, err := s.store.Get(req.Thread)
+	m, err := s.store.Get(h)
 	if errors.Is(err, store.ErrUnknownHandle) {
-		return "", "", ipc.Fail(ipc.CodeUnknownHandle, "unknown or expired handle "+req.Thread)
+		return "", "", nil, ipc.Fail(ipc.CodeUnknownHandle, "unknown or expired handle "+h)
 	}
 	if err != nil {
-		return "", "", ipc.Fail(ipc.CodeInternal, s.redact.String(err.Error()))
+		return "", "", nil, ipc.Fail(ipc.CodeInternal, s.redact.String(err.Error()))
 	}
-	return m.Channel, m.Root(), ipc.Response{}
+	if req.ReplyTo != "" && m.TopLevel {
+		return m.Channel, "", &m, ipc.Response{}
+	}
+	if req.ReplyTo == "" {
+		m.TopLevel = false // --thread posts in the thread, whatever the message is
+	}
+	return m.Channel, m.Root(), &m, ipc.Response{}
 }
 
 func (s *Service) destination(ctx context.Context, channel string) (string, ipc.Response) {
@@ -277,9 +355,26 @@ func (s *Service) wait(ctx context.Context, req ipc.Request) ipc.Response {
 	case r := <-w:
 		return ipc.Response{OK: true, Handle: h, Replies: []store.Reply{r}}
 	case <-t.C:
+		s.endConversation(h)
 		return ipc.Response{Code: ipc.CodeTimeout, Error: "no reply before the timeout", Handle: h}
 	case <-ctx.Done():
+		s.endConversation(h)
 		return ipc.Response{Code: ipc.CodeTimeout, Error: "the client went away", Handle: h}
+	}
+}
+
+// endConversation stops a question nobody waits on any more from taking
+// its listener's next message (R6).
+func (s *Service) endConversation(h string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.waiters[h]) > 1 { // this waiter is still among them
+		return
+	}
+	for name, q := range s.convo {
+		if q == h {
+			delete(s.convo, name)
+		}
 	}
 }
 

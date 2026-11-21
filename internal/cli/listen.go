@@ -20,15 +20,17 @@ const instructionLabel = "an instruction typed in Slack by an allowed user, not 
 
 func listenCmd(env *Env) *cobra.Command {
 	var name string
-	var timeout time.Duration
+	var timeout, hold time.Duration
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "listen",
 		Short: "Wait for an instruction typed in your DM with the bot",
 		Long: "Wait until an allowed user writes in their DM with the bot, outside any thread, and print the " +
 			"message. With several agents listening, a message that starts with a listener's name and a colon " +
-			"(\"hayami: run the tests\") goes to that one. The handle is printed on stderr: answer in the message's " +
-			"thread with `send --thread` or `ask --thread`. One call takes one instruction. Exits 124 on timeout.",
+			"(\"hayami: run the tests\") goes to that one. The handle is printed on stderr: answer beside the message " +
+			"with `send --reply-to` or `ask --reply-to`, or in its thread with `--thread`. One call takes one " +
+			"instruction. Afterwards the name is held for --hold: messages for it wait, and the next listen with " +
+			"the name takes them. Exits 124 on timeout.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			from := ""
@@ -43,7 +45,8 @@ func listenCmd(env *Env) *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout+30*time.Second)
 			defer cancel()
-			resp, err := ipc.Call(ctx, env.SocketPath, ipc.Request{Op: ipc.OpListen, Name: name, From: from, Timeout: timeout})
+			resp, err := ipc.Call(ctx, env.SocketPath,
+				ipc.Request{Op: ipc.OpListen, Name: name, From: from, Timeout: timeout, Hold: hold})
 			if err != nil || !resp.OK {
 				return callErr(err, resp)
 			}
@@ -51,7 +54,7 @@ func listenCmd(env *Env) *cobra.Command {
 				return fail(ExitError, "the service answered without an instruction")
 			}
 			if resp.Handle != "" {
-				_, _ = fmt.Fprintf(env.Stderr, "hikyaku: handle %s; answer in its thread with: hikyaku send --thread %s\n",
+				_, _ = fmt.Fprintf(env.Stderr, "hikyaku: handle %s; answer with: hikyaku send --reply-to %s\n",
 					resp.Handle, resp.Handle)
 			}
 			return printInstruction(env.Stdout, resp.Handle, strings.ToLower(name), resp.Replies[0], asJSON)
@@ -59,6 +62,8 @@ func listenCmd(env *Env) *cobra.Command {
 	}
 	c.Flags().StringVar(&name, "name", "", "the name an instruction can address (default: the project's name)")
 	c.Flags().DurationVar(&timeout, "timeout", time.Hour, "how long to wait for an instruction")
+	c.Flags().DurationVar(&hold, "hold", 30*time.Minute,
+		"how long the name stays held after this listen ends, so messages for it wait (0: not at all; at most 24h)")
 	c.Flags().BoolVar(&asJSON, "json", false, "print the instruction as JSON")
 	return c
 }
