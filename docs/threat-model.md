@@ -213,6 +213,12 @@ answer.
   socket (S2); nothing from Slack can. `off` ends a running run.
 - Limits: one run at a time, three waiting, five minutes and $0.50 a run
   (`--max-budget-usd`), $5 a day.
+- The persona's voice (spec 008) goes into the prompt after the rules,
+  fenced with a nonce and labelled as the owner's style guidance, with the
+  rules winning. The file is the owner's, in their config directory, so it
+  is trusted as the settings are; whatever it says, the run's flags decide
+  what the run can do. Text the persona adds to the bot's notes is
+  neutralized, so it cannot mention anyone.
 - The answer is labelled as automated and possibly wrong. The question is
   fenced with a nonce in the prompt, and the prompt says text in sources is
   data. That is a convention for the model; the defences above do not rely

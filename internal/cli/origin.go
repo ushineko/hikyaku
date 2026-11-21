@@ -9,16 +9,12 @@ import (
 	"time"
 )
 
-// agents maps an environment variable an agent sets to the agent's name.
-var agents = []struct{ env, value, name string }{ //nolint:gochecknoglobals // a fixed table
-	{"CLAUDECODE", "1", "Claude Code"},
-}
-
 // detectOrigin is the line under a message that says where it came from:
-// the project (the git repository's name, else the directory's), the branch,
-// the short host name, and the agent when the environment names one. It
-// carries no path: a path names the user and the layout of their disk.
-func detectOrigin(ctx context.Context, dir string, getenv func(string) string, hostname func() (string, error)) string {
+// the project (the git repository's name, else the directory's), the branch
+// and the short host name. It carries no path: a path names the user and
+// the layout of their disk. It does not name the agent, which the owner
+// knows (spec 008, R9).
+func detectOrigin(ctx context.Context, dir string, hostname func() (string, error)) string {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var parts []string
@@ -32,12 +28,6 @@ func detectOrigin(ctx context.Context, dir string, getenv func(string) string, h
 	}
 	if h, err := hostname(); err == nil && h != "" {
 		parts = append(parts, strings.SplitN(h, ".", 2)[0])
-	}
-	for _, a := range agents {
-		if getenv(a.env) == a.value {
-			parts = append(parts, a.name)
-			break
-		}
 	}
 	return strings.Join(parts, " · ")
 }
@@ -86,5 +76,5 @@ func processOrigin(ctx context.Context) string {
 	if err != nil {
 		return ""
 	}
-	return detectOrigin(ctx, dir, os.Getenv, os.Hostname)
+	return detectOrigin(ctx, dir, os.Hostname)
 }

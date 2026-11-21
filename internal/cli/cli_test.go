@@ -83,9 +83,20 @@ func newHarness(t *testing.T) *harness {
 	}
 	require.NoError(t, os.MkdirAll(filepath.Dir(h.settings), 0o700))
 	require.NoError(t, os.WriteFile(h.settings, []byte("owner: "+owner+"\n"), 0o600))
+	h.persona(quietPersona)
 	require.NoError(t, h.tokens.Set(secret.Bot, botToken))
 	require.NoError(t, h.tokens.Set(secret.App, appToken))
 	return h
+}
+
+// quietPersona is the default persona with no emoji or asides, so the
+// bot's notes are exactly as written; persona tests write their own.
+const quietPersona = "## Chances\n\n- emoji: never\n- aside: never\n"
+
+// persona writes the persona file beside the settings.
+func (h *harness) persona(text string) {
+	h.t.Helper()
+	require.NoError(h.t, os.WriteFile(filepath.Join(filepath.Dir(h.settings), "SOUL.md"), []byte(text), 0o600))
 }
 
 func (h *harness) env(stdin string, stdout, stderr io.Writer) *cli.Env {

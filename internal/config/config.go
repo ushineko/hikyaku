@@ -44,6 +44,9 @@ type Settings struct {
 	// Retention is how long a message is remembered, as a Go duration; empty
 	// is seven days.
 	Retention string `yaml:"retention,omitempty"`
+	// Persona is the persona file (spec 008), absolute or relative to the
+	// settings' directory; empty is SOUL.md there.
+	Persona string `yaml:"persona,omitempty"`
 	// Answerer configures the answerer (spec 007). Whether it is on is not
 	// a setting: it is switched with `hikyaku answerer on|off`.
 	Answerer Answerer `yaml:"answerer,omitempty"`

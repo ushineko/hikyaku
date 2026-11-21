@@ -181,7 +181,7 @@ func TestAHoldThatEndsSaysSo(t *testing.T) {
 // message, it answers in its thread; it cannot be combined.
 func TestReplyToAnswersWhereThePersonWrote(t *testing.T) {
 	h := newHarness(t)
-	h.origin = "hikyaku · main · testhost · Claude Code"
+	h.origin = "hikyaku · main · testhost"
 	h.serve()
 
 	ts, instr := held(t, h, "alpha", "0", "status?")

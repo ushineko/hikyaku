@@ -28,6 +28,7 @@ set up by hand.
 - [Sending and asking](#sending-and-asking)
 - [Listening for instructions](#listening-for-instructions)
 - [The answerer](#the-answerer)
+- [The persona](#the-persona)
 - [Settings](#settings)
 - [Scopes](#scopes)
 - [Security](#security)
@@ -103,8 +104,8 @@ Text is Slack mrkdwn as written. `--title` puts a header above it and
 `--status ok|warn|fail` an emoji before the title.
 
 Under every message, a small line says where it came from: the project (the
-git repository's name, also from inside a worktree), the branch, the host and
-the agent, as in `hikyaku · feat/x · workstation · Claude Code`. `--from
+git repository's name, also from inside a worktree), the branch and the
+host, as in `hikyaku · feat/x · workstation`. `--from
 "nightly build"` puts other text there, and `--from ""` leaves the line out,
 so the message is the text alone. The line is plain text and names no path.
 It is copied along with the message, so leave it out of a message meant to
@@ -252,6 +253,34 @@ This mode is an experiment and an exception to the project's rule against
 unattended agents; [`docs/threat-model.md`](docs/threat-model.md), S6, says
 what it defends and what it does not.
 
+## The persona
+
+The bot's voice comes from a persona file, in the spirit of a SOUL.md:
+`~/.config/hikyaku/SOUL.md`, or the file `persona` names in the settings.
+Without one, a built-in default applies: a technical helper with a dry sense
+of humour, the occasional dad joke, and emoji that have nothing to do with
+anything.
+
+```bash
+hikyaku persona          # which file is in effect, the name, the chances
+hikyaku persona --init   # write the default to SOUL.md to edit
+```
+
+Its sections, each optional (a missing one falls back to the default's):
+
+| Section | What it does |
+| --- | --- |
+| `## Name` | The bot's name. It starts the answerer's origin line, and `<name>: …` reaches the answerer like `answerer: …` |
+| `## Voice` | How the answerer writes. It goes into each run's prompt after the answerer's rules, as style guidance; the rules win |
+| `## Started` | The notes a run starts with, one picked at random |
+| `## Emoji`, `## Asides` | Added to the bot's notes now and then: an emoji at the end, an aside on a line of its own. A note's own words are never changed |
+| `## Chances` | `- emoji: 1 in 3`, `- aside: 1 in 8`, or `never` |
+
+Edits apply to the next note, with no restart. Agents' own messages and the
+answerer's answers get no emoji or asides; nothing from the file can mention
+anyone. The name in Slack's sidebar is the app's own display name, set in
+the app's settings.
+
 ## Settings
 
 `~/.config/hikyaku/settings.yaml` (`$XDG_CONFIG_HOME`):
@@ -269,6 +298,7 @@ what it defends and what it does not.
 | `answerer.run_timeout` | Time limit of one run | `5m` |
 | `answerer.model` | Model for the runs | Claude Code's default |
 | `answerer.claude` | The Claude Code command | `claude` |
+| `persona` | The persona file, absolute or relative to the settings | `SOUL.md` beside the settings |
 
 Messages and replies are kept in `~/.local/state/hikyaku/messages.json`
 (`$XDG_STATE_HOME`), so `inbox` works after a restart. The socket is
@@ -324,6 +354,11 @@ Go 1.26 or newer.
 ## Changelog
 
 ### Unreleased
+
+- A persona file (`SOUL.md`) gives the bot a name, the voice the answerer
+  writes in, and varied notes with the occasional strange emoji or aside;
+  the built-in default is a dry technical helper with dad jokes.
+  `hikyaku persona [--init]` (spec 008).
 
 - A listening agent's name is held after each `listen` (`--hold`, 30
   minutes by default), so messages for a busy agent wait for it;

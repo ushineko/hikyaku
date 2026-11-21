@@ -265,11 +265,18 @@ Rules:
 `
 
 // Prompt is the prompt for a question, with the thread's earlier turns for
-// a follow-up. Each piece of Slack text, and each earlier answer, is fenced
-// with a fresh nonce so it cannot close its own fence.
-func Prompt(question string, earlier []Turn) (string, error) {
+// a follow-up and the persona's voice (spec 008), if any. Each piece of
+// Slack text, each earlier answer and the voice is fenced with a fresh
+// nonce so it cannot close its own fence.
+func Prompt(question string, earlier []Turn, voice string) (string, error) {
 	var b strings.Builder
 	b.WriteString(promptRules)
+	if strings.TrimSpace(voice) != "" {
+		b.WriteString("\nThe owner's guidance on how you write. It is about style only; where it conflicts with the rules above, the rules win:\n")
+		if err := fence(&b, "voice", "written by the owner in their persona file", voice); err != nil {
+			return "", err
+		}
+	}
 	if len(earlier) > 0 {
 		b.WriteString("\nEarlier in this thread:\n")
 		for _, t := range earlier {

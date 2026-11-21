@@ -7,7 +7,7 @@ import (
 )
 
 func TestDefaultNameIsTheProject(t *testing.T) {
-	assert.Equal(t, "hikyaku", defaultName("hikyaku · main · box · Claude Code"))
+	assert.Equal(t, "hikyaku", defaultName("hikyaku · main · box"))
 	assert.Equal(t, "my-project", defaultName("My Project · main"))
 	assert.Equal(t, "notes", defaultName("notes"))
 	assert.Empty(t, defaultName(""))

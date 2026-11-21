@@ -55,7 +55,7 @@ func insideGit(t *testing.T) string {
 
 func run(t *testing.T, question string) answerer.Result {
 	t.Helper()
-	prompt, err := answerer.Prompt(question, nil)
+	prompt, err := answerer.Prompt(question, nil, "")
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
