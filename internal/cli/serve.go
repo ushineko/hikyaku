@@ -14,6 +14,7 @@ import (
 	"github.com/ushineko/hikyaku/internal/answerer"
 	"github.com/ushineko/hikyaku/internal/ipc"
 	"github.com/ushineko/hikyaku/internal/paths"
+	"github.com/ushineko/hikyaku/internal/persona"
 	"github.com/ushineko/hikyaku/internal/secret"
 	"github.com/ushineko/hikyaku/internal/service"
 	"github.com/ushineko/hikyaku/internal/slackio"
@@ -82,6 +83,7 @@ func serve(ctx context.Context, env *Env, debug bool) error {
 	svc, err := service.New(service.Deps{
 		Poster: sc, Listener: sc, Store: st, Settings: s, Log: log, Redact: redact, Now: env.Now,
 		Runner: runner, AnswererState: filepath.Join(filepath.Dir(env.StatePath), "answerer.json"),
+		Persona: &persona.Loader{Path: env.personaPath(s), Log: log},
 	})
 	if err != nil {
 		return fail(ExitError, "%v", err)

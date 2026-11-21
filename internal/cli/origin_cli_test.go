@@ -35,7 +35,7 @@ func footer(p slacktest.Post) []string {
 // removes that, and only a question asks for a reply in its thread.
 func TestEveryMessageSaysWhereItCameFrom(t *testing.T) {
 	h := newHarness(t)
-	h.origin = "hikyaku · feat/x · testhost · Claude Code"
+	h.origin = "hikyaku · feat/x · testhost"
 	h.serve()
 
 	code, _, _ := h.run("", "send", "build *done*")

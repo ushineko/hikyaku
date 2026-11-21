@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"os"
 	"slices"
 	"strings"
@@ -34,12 +33,6 @@ const (
 	noteRedacted  = "Something that looked like a secret was removed from this answer."
 	noteFollowUps = "This thread has had its ten follow-ups. Ask a new question at the top level."
 )
-
-// StartedNotes are what the bot says when a run starts, one picked at
-// random so the thread does not read the same each time.
-var StartedNotes = []string{
-	"Looking into it.", "On it.", "Checking.", "Having a look.", "Digging in.", "Checking the sources.",
-}
 
 // errSwitchedOff is why a run is cancelled by `answerer off`.
 var errSwitchedOff = errors.New("the answerer was switched off")
@@ -88,7 +81,7 @@ func newDesk(r answerer.Runner, settings config.Answerer, path string) (*desk, e
 	d := &desk{runner: r, settings: settings, path: path, threads: map[string]*exchange{}, wake: make(chan struct{}, 1)}
 	host, _ := os.Hostname()
 	host, _, _ = strings.Cut(host, ".")
-	d.from = "answerer · " + host + " · Claude Code · an automated answer from the sources, which may be wrong"
+	d.from = " · " + host + " · an automated answer from the sources, which may be wrong"
 	b, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -275,9 +268,10 @@ func (s *Service) answer1(runCtx, ctx context.Context, q question) {
 		s.note(ctx, q, fmt.Sprintf("Not answered: the answerer has used today's budget ($%.2f). It answers again after midnight.", dayCap))
 		return
 	}
-	s.note(ctx, q, StartedNotes[rand.IntN(len(StartedNotes))]) //nolint:gosec // not a secret, a choice of words
+	p := s.persona.Get()
+	s.note(ctx, q, p.StartedNote())
 
-	prompt, err := answerer.Prompt(q.text, q.earlier)
+	prompt, err := answerer.Prompt(q.text, q.earlier, p.Voice)
 	if err != nil {
 		s.log.Error("answerer prompt", "err", err)
 		s.note(ctx, q, noteFailed)
@@ -344,7 +338,7 @@ func (s *Service) postAnswer(ctx context.Context, q question, text string) {
 		body += "\n\n_" + noteRedacted + "_"
 	}
 	posted, ts, err := s.poster.Post(ctx, q.channel, slackio.Outgoing{
-		Text: body, From: d.from, ThreadTS: q.root, NoUnfurl: true,
+		Text: body, From: s.answererName() + d.from, ThreadTS: q.root, NoUnfurl: true,
 	})
 	if err != nil {
 		s.log.Warn("post an answer", "err", s.redact.String(err.Error()))
@@ -365,7 +359,13 @@ func (s *Service) postAnswer(ctx context.Context, q question, text string) {
 
 // note posts one of the bot's notes in a question's thread.
 func (s *Service) note(ctx context.Context, q question, text string) {
-	if _, _, err := s.poster.Post(ctx, q.channel, slackio.Outgoing{Text: text, ThreadTS: q.root}); err != nil {
-		s.log.Warn("post an answerer note", "err", s.redact.String(err.Error()))
+	s.post(ctx, q.channel, slackio.Outgoing{Text: text, ThreadTS: q.root})
+}
+
+// answererName is the persona's name, or "answerer" (spec 008, R5).
+func (s *Service) answererName() string {
+	if n := s.persona.Get().Name; n != "" {
+		return n
 	}
+	return answererPrefix
 }

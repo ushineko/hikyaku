@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ushineko/hikyaku/internal/answerer"
-	"github.com/ushineko/hikyaku/internal/service"
+	"github.com/ushineko/hikyaku/internal/persona"
 	"github.com/ushineko/hikyaku/internal/slacktest"
 )
 
@@ -88,7 +88,7 @@ func (h *harness) postIn(ts string, ok func(string) bool) slacktest.Post {
 }
 
 // started is any of the notes a run starts with.
-func started(t string) bool { return slices.Contains(service.StartedNotes, t) }
+func started(t string) bool { return slices.Contains(persona.Default().Started, t) }
 
 func is(s string) func(string) bool { return func(t string) bool { return t == s } }
 func startsWith(s string) func(string) bool {
@@ -107,7 +107,7 @@ func noRunFor(t *testing.T, r *fakeRunner, before int) {
 // channel message and a DM a listener takes start nothing.
 func TestTheAnswererAnswersOnlyTheOwnerWhenOn(t *testing.T) {
 	h, r := answererHarness(t, "allowed_repliers: ["+owner+", "+allowedOther+"]\n")
-	h.origin = "hikyaku · main · testhost · Claude Code"
+	h.origin = "hikyaku · main · testhost"
 
 	ts := h.fake.Say(t, slacktest.DMChannel, "im", owner, "release status?")
 	h.postIn(ts, is("No agent is listening, so this was not delivered."))

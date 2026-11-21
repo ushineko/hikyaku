@@ -20,6 +20,7 @@ import (
 	"github.com/ushineko/hikyaku/internal/buildinfo"
 	"github.com/ushineko/hikyaku/internal/config"
 	"github.com/ushineko/hikyaku/internal/ipc"
+	"github.com/ushineko/hikyaku/internal/persona"
 	"github.com/ushineko/hikyaku/internal/secret"
 	"github.com/ushineko/hikyaku/internal/slackio"
 	"github.com/ushineko/hikyaku/internal/store"
@@ -61,6 +62,8 @@ type Service struct {
 
 	// desk is the answerer (spec 007); nil when the service has none.
 	desk *desk
+	// persona is the bot's persona (spec 008).
+	persona *persona.Loader
 }
 
 // Deps is what a Service is built from.
@@ -77,6 +80,8 @@ type Deps struct {
 	// AnswererState is the file the answerer's switch and spending are
 	// kept in.
 	AnswererState string
+	// Persona reads the persona file; nil is the built-in default.
+	Persona *persona.Loader
 }
 
 // New builds a Service.
@@ -95,7 +100,7 @@ func New(d Deps) (*Service, error) {
 		repliers: d.Settings.Repliers(), log: d.Log, redact: d.Redact, now: d.Now,
 		waiters: map[string][]chan store.Reply{}, listeners: map[string]*listener{},
 		instrs: map[string]*instr{}, owners: map[string]string{}, convo: map[string]string{},
-		bg: context.Background(),
+		bg: context.Background(), persona: d.Persona,
 	}
 	if d.Runner != nil {
 		desk, err := newDesk(d.Runner, d.Settings.Answerer, d.AnswererState)

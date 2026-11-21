@@ -24,12 +24,9 @@ func host(name string) func() (string, error) {
 	return func() (string, error) { return name, nil }
 }
 
-func env(vars map[string]string) func(string) string {
-	return func(k string) string { return vars[k] }
-}
-
 // AC11: the origin names the repository, not the worktree's directory, with
-// the branch, the short host name and the agent; it names no path.
+// the branch and the short host name; it names no path, and no agent
+// (spec 008, R9).
 func TestOriginNamesTheRepositoryNotTheWorktree(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
@@ -45,13 +42,14 @@ func TestOriginNamesTheRepositoryNotTheWorktree(t *testing.T) {
 	require.NoError(t, os.Mkdir(sub, 0o700))
 
 	ctx := context.Background()
-	assert.Equal(t, "myproject · main · box · Claude Code",
-		detectOrigin(ctx, repo, env(map[string]string{"CLAUDECODE": "1"}), host("box.example.invalid")))
+	t.Setenv("CLAUDECODE", "1")
+	assert.Equal(t, "myproject · main · box", detectOrigin(ctx, repo, host("box.example.invalid")),
+		"the agent is not named")
 	assert.Equal(t, "myproject · feat/thing · box",
-		detectOrigin(ctx, sub, env(nil), host("box")), "a worktree, from a directory inside it")
+		detectOrigin(ctx, sub, host("box")), "a worktree, from a directory inside it")
 
 	plain := filepath.Join(root, "notes")
 	require.NoError(t, os.Mkdir(plain, 0o700))
-	assert.Equal(t, "notes", detectOrigin(ctx, plain, env(nil), func() (string, error) { return "", errors.New("no host") }),
+	assert.Equal(t, "notes", detectOrigin(ctx, plain, func() (string, error) { return "", errors.New("no host") }),
 		"outside a repository, the directory's name alone")
 }

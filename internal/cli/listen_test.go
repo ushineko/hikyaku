@@ -77,7 +77,7 @@ var instructionFence = regexp.MustCompile(`(?s)^--- instruction ([0-9a-f]{12}) f
 // is told which agent picked it up.
 func TestAnInstructionReachesTheListener(t *testing.T) {
 	h := newHarness(t)
-	h.origin = "hikyaku · main · testhost · Claude Code"
+	h.origin = "hikyaku · main · testhost"
 	h.serve()
 
 	l := startListen(h)

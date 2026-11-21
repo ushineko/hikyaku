@@ -103,8 +103,8 @@ func (s *Service) listen(ctx context.Context, req ipc.Request) ipc.Response {
 	switch {
 	case !validName.MatchString(name):
 		return ipc.Fail(ipc.CodeBadRequest, "a listener's name is 1 to 40 letters, digits, '.', '_' or '-'")
-	case name == answererPrefix:
-		return ipc.Fail(ipc.CodeBadRequest, "\"answerer\" addresses the answerer; choose another --name")
+	case name == answererPrefix || strings.EqualFold(name, s.persona.Get().Name):
+		return ipc.Fail(ipc.CodeBadRequest, "\""+name+"\" addresses the answerer; choose another --name")
 	case req.Hold < 0 || req.Hold > MaxHold:
 		return ipc.Fail(ipc.CodeBadRequest, "--hold is from 0 to 24h")
 	}
@@ -243,9 +243,12 @@ func (s *Service) whenGone(d *departure) {
 		s.log.Warn("cannot say a listener stopped", "err", resp.Error)
 		return
 	}
-	if err := s.poster.Me(ctx, dm, noticeGone(d.name)); err != nil {
+	notice := slackio.Neutralize(s.persona.Get().Flavour(noticeGone(d.name)))
+	if err := s.poster.Me(ctx, dm, notice); err != nil {
 		s.log.Warn("post /me", "err", s.redact.String(err.Error()))
-		s.post(ctx, dm, slackio.Outgoing{Text: "_" + noticeGone(d.name) + "_"})
+		if _, _, err := s.poster.Post(ctx, dm, slackio.Outgoing{Text: "_" + notice + "_"}); err != nil {
+			s.log.Warn("post a note", "err", s.redact.String(err.Error()))
+		}
 	}
 }
 
@@ -287,7 +290,7 @@ func (s *Service) instruction(ctx context.Context, m slackio.Incoming) {
 		s.log.Warn("ignored an instruction from a user who is not allowed", "user", m.User)
 		return
 	}
-	if rest, ok := addressedTo(answererPrefix, m.Text); ok && m.User == s.settings.Owner {
+	if rest, ok := s.toAnswerer(m.Text); ok && m.User == s.settings.Owner {
 		if !s.offerQuestion(ctx, m.Channel, m.TS, m.User, rest) {
 			go s.answer(ctx, m, slackio.Outgoing{Text: answerAnswererOff})
 		}
@@ -371,6 +374,18 @@ func (s *Service) taken(d delivery, l *listener) {
 		slackio.Outgoing{Text: answerTaken, From: l.fromLine()})
 }
 
+// toAnswerer reports whether text is addressed to the answerer, by
+// "answerer:" or the persona's name (spec 008, R5), and returns the rest.
+func (s *Service) toAnswerer(text string) (string, bool) {
+	if rest, ok := addressedTo(answererPrefix, text); ok {
+		return rest, true
+	}
+	if name := s.persona.Get().Name; name != "" {
+		return addressedTo(name, text)
+	}
+	return "", false
+}
+
 // addressedTo reports whether text starts with name and a colon, and
 // returns the rest.
 func addressedTo(name, text string) (string, bool) {
@@ -446,7 +461,10 @@ func (s *Service) answer(ctx context.Context, m slackio.Incoming, msg slackio.Ou
 	s.post(ctx, m.Channel, msg)
 }
 
+// post posts one of the bot's notes, varied by the persona (spec 008, R4)
+// and unable to mention anyone, whatever the persona file holds (R6).
 func (s *Service) post(ctx context.Context, channel string, msg slackio.Outgoing) {
+	msg.Text = slackio.Neutralize(s.persona.Get().Flavour(msg.Text))
 	if _, _, err := s.poster.Post(ctx, channel, msg); err != nil {
 		s.log.Warn("post a note", "err", s.redact.String(err.Error()))
 	}
