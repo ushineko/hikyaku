@@ -212,6 +212,7 @@ func statusCmd(env *Env) *cobra.Command {
 			if len(st.Listeners) > 0 {
 				_, _ = fmt.Fprintf(env.Stdout, "listening: %s\n", strings.Join(st.Listeners, ", "))
 			}
+			_, _ = fmt.Fprintln(env.Stdout, answererLine(st.Answerer))
 			return nil
 		},
 	}

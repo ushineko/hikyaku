@@ -54,7 +54,20 @@ type Outgoing struct {
 	Question bool
 	// ThreadTS posts the message in that thread instead of starting one.
 	ThreadTS string
+	// NoUnfurl stops Slack fetching the links in the message to preview
+	// them, so a link in text hikyaku did not write is never fetched
+	// unless someone clicks it.
+	NoUnfurl bool
 }
+
+// Neutralize stops text from mentioning anyone: Slack's special mentions
+// (<!channel>, <!here>, <!subteam^…>), user mentions (<@U…>) and channel
+// links (<#C…>) are shown as text instead. Ordinary links are kept.
+func Neutralize(text string) string {
+	return mentionOpen.Replace(text)
+}
+
+var mentionOpen = strings.NewReplacer("<!", "&lt;!", "<@", "&lt;@", "<#", "&lt;#") //nolint:gochecknoglobals // built once
 
 // ReplyHint is the line a question carries.
 const ReplyHint = "Reply in this thread to answer."
@@ -136,6 +149,9 @@ func (c *Client) Post(ctx context.Context, channel string, msg Outgoing) (string
 	}
 	if msg.ThreadTS != "" {
 		opts = append(opts, slack.MsgOptionTS(msg.ThreadTS))
+	}
+	if msg.NoUnfurl {
+		opts = append(opts, slack.MsgOptionDisableLinkUnfurl(), slack.MsgOptionDisableMediaUnfurl())
 	}
 	ch, ts, err := c.api.PostMessageContext(ctx, channel, opts...)
 	if err != nil {

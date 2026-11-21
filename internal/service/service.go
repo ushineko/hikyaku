@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ushineko/hikyaku/internal/answerer"
 	"github.com/ushineko/hikyaku/internal/buildinfo"
 	"github.com/ushineko/hikyaku/internal/config"
 	"github.com/ushineko/hikyaku/internal/ipc"
@@ -44,6 +45,9 @@ type Service struct {
 	waiters   map[string][]chan store.Reply
 	listeners map[string]*listener
 	dm        string
+
+	// desk is the answerer (spec 007); nil when the service has none.
+	desk *desk
 }
 
 // Deps is what a Service is built from.
@@ -55,10 +59,15 @@ type Deps struct {
 	Log      *slog.Logger
 	Redact   *secret.Redactor
 	Now      func() time.Time
+	// Runner runs the answerer's questions; nil means no answerer.
+	Runner answerer.Runner
+	// AnswererState is the file the answerer's switch and spending are
+	// kept in.
+	AnswererState string
 }
 
 // New builds a Service.
-func New(d Deps) *Service {
+func New(d Deps) (*Service, error) {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
@@ -68,11 +77,19 @@ func New(d Deps) *Service {
 	if d.Log == nil {
 		d.Log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{
+	s := &Service{
 		poster: d.Poster, listener: d.Listener, store: d.Store, settings: d.Settings,
 		repliers: d.Settings.Repliers(), log: d.Log, redact: d.Redact, now: d.Now,
 		waiters: map[string][]chan store.Reply{}, listeners: map[string]*listener{},
 	}
+	if d.Runner != nil {
+		desk, err := newDesk(d.Runner, d.Settings.Answerer, d.AnswererState)
+		if err != nil {
+			return nil, err
+		}
+		s.desk = desk
+	}
+	return s, nil
 }
 
 // Run listens to Slack until ctx is cancelled. It returns an error only when
@@ -84,6 +101,9 @@ func (s *Service) Run(ctx context.Context) error {
 	in := make(chan slackio.Incoming, 16)
 	errc := make(chan error, 1)
 	go func() { errc <- s.listener.Listen(ctx, in, s.connected.Store) }()
+	if s.desk != nil {
+		go s.answerLoop(ctx)
+	}
 	for {
 		select {
 		case err := <-errc:
@@ -91,7 +111,7 @@ func (s *Service) Run(ctx context.Context) error {
 		case m := <-in:
 			switch {
 			case m.ThreadTS != "":
-				s.reply(m)
+				s.reply(ctx, m)
 			case m.InDM():
 				s.instruction(ctx, m)
 			}
@@ -102,7 +122,7 @@ func (s *Service) Run(ctx context.Context) error {
 // reply records a thread reply from an allowed user and wakes whoever is
 // asking. A reply from anyone else, in one of our threads, is dropped and
 // logged by user ID only: its text is not ours to keep.
-func (s *Service) reply(m slackio.Incoming) {
+func (s *Service) reply(ctx context.Context, m slackio.Incoming) {
 	handle, ours := s.store.Find(m.Channel, m.ThreadTS, m.TS)
 	if !ours {
 		return
@@ -121,6 +141,9 @@ func (s *Service) reply(m slackio.Incoming) {
 	s.mu.Unlock()
 	for _, w := range ws {
 		w <- r // buffered, one per waiter
+	}
+	if len(ws) == 0 {
+		s.offerFollowUp(ctx, m.Channel, m.ThreadTS, m.User, m.Text)
 	}
 }
 
@@ -143,7 +166,10 @@ func (s *Service) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 		return ipc.Response{OK: true, Status: &ipc.Status{
 			PID: os.Getpid(), Version: buildinfo.Version(), Connected: s.connected.Load(),
 			Owner: s.settings.Owner, Repliers: len(s.repliers), Listeners: s.listenerNames(),
+			Answerer: s.answerStatus(),
 		}}
+	case ipc.OpAnswerer:
+		return s.answerSwitch(ctx, req)
 	default:
 		return ipc.Fail(ipc.CodeBadRequest, "unknown operation "+req.Op)
 	}

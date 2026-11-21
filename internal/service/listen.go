@@ -130,6 +130,9 @@ func (s *Service) instruction(ctx context.Context, m slackio.Incoming) {
 	}
 	s.mu.Unlock()
 
+	if l == nil && len(names) == 0 && s.offerQuestion(ctx, m.Channel, m.TS, m.User, m.Text) {
+		return
+	}
 	if l == nil {
 		answer := answerNobody
 		if len(names) > 1 {

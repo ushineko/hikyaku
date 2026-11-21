@@ -12,8 +12,11 @@ import (
 	"os"
 	"path/filepath"
 
+	"time"
+
 	"github.com/spf13/cobra"
 
+	"github.com/ushineko/hikyaku/internal/answerer"
 	"github.com/ushineko/hikyaku/internal/buildinfo"
 	"github.com/ushineko/hikyaku/internal/config"
 	"github.com/ushineko/hikyaku/internal/ipc"
@@ -63,6 +66,10 @@ type Env struct {
 	APIURL string
 	// Origin says where a message comes from when --from is not given.
 	Origin func(context.Context) string
+	// Runner overrides the answerer's runs (real Claude Code), for tests.
+	Runner answerer.Runner
+	// Now overrides the service's clock, for tests.
+	Now func() time.Time
 }
 
 // DefaultEnv is the real process's environment.
@@ -111,7 +118,7 @@ func Root(env *Env) *cobra.Command {
 	root.SetIn(env.Stdin)
 	root.SetOut(env.Stdout)
 	root.SetErr(env.Stderr)
-	root.AddCommand(serveCmd(env), sendCmd(env), askCmd(env), inboxCmd(env), listenCmd(env), tokenCmd(env), statusCmd(env))
+	root.AddCommand(serveCmd(env), sendCmd(env), askCmd(env), inboxCmd(env), listenCmd(env), answererCmd(env), tokenCmd(env), statusCmd(env))
 	return root
 }
 

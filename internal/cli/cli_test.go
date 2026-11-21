@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ushineko/hikyaku/internal/answerer"
 	"github.com/ushineko/hikyaku/internal/cli"
 	"github.com/ushineko/hikyaku/internal/secret"
 	"github.com/ushineko/hikyaku/internal/slacktest"
@@ -59,6 +60,10 @@ type harness struct {
 	stop     func()
 	// origin is what the CLI would detect; empty means none.
 	origin string
+	// runner stands in for the answerer's Claude Code runs; now, when
+	// set, is the service's clock.
+	runner answerer.Runner
+	now    func() time.Time
 }
 
 func newHarness(t *testing.T) *harness {
@@ -106,6 +111,7 @@ func (h *harness) serve() {
 		IsTerminal: func() bool { return false },
 		SocketPath: h.socket, SettingsPath: h.settings, StatePath: h.state,
 		Secrets: h.tokens, APIURL: h.fake.APIURL(),
+		Runner: h.runner, Now: h.now,
 	}
 	go func() { done <- cli.Execute(ctx, env, []string{"serve", "--headless"}) }()
 	h.fake.WaitConnected(h.t)
