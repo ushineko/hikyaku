@@ -190,8 +190,11 @@ func TestQuestionsQueueAndTheQueueIsShort(t *testing.T) {
 		h.postIn(ts[i], is(fmt.Sprintf("answer to q%d", i)))
 	}
 	assert.Len(t, r.runs(), 4, "the turned-away question never ran")
-	_, out, _ = h.run("", "status")
-	assert.Contains(t, out, "answerer: on; $0.40 of $5.00 spent today")
+	// The answer is posted a moment before the run is marked done.
+	require.Eventually(t, func() bool {
+		_, out, _ = h.run("", "status")
+		return strings.Contains(out, "answerer: on; $0.40 of $5.00 spent today")
+	}, 5*time.Second, 10*time.Millisecond, "status: %s", out)
 }
 
 func answerers(prompt string) (answerer.Result, error) {
