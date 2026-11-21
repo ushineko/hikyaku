@@ -194,7 +194,7 @@ func TestQuestionsQueueAndTheQueueIsShort(t *testing.T) {
 	h.postIn(ts[3], is("Queued: 3 ahead of it."))
 	h.postIn(ts[4], startsWith("Busy:"))
 	_, out, _ := h.run("", "status")
-	assert.Contains(t, out, "answerer: on, answering, 3 queued; $0.00 of $5.00 spent today")
+	assert.Contains(t, out, "answerer: on, answering, 3 queued; $0.00 spent today, $0.00 of $5.00 by users")
 
 	close(release)
 	for i := range 4 {
@@ -204,7 +204,7 @@ func TestQuestionsQueueAndTheQueueIsShort(t *testing.T) {
 	// The answer is posted a moment before the run is marked done.
 	require.Eventually(t, func() bool {
 		_, out, _ = h.run("", "status")
-		return strings.Contains(out, "answerer: on; $0.40 of $5.00 spent today")
+		return strings.Contains(out, "answerer: on; $0.40 spent today, $0.00 of $5.00 by users")
 	}, 5*time.Second, 10*time.Millisecond, "status: %s", out)
 }
 
@@ -215,8 +215,8 @@ func answerers(prompt string) (answerer.Result, error) {
 }
 
 // AC5: a run past its time limit is ended and charged its whole budget;
-// past the day's cap nothing runs until the next day; a run past its
-// budget says so.
+// an admin has no daily cap; past the users' cap no user question runs
+// until the next day; a run past its budget says so.
 func TestTheAnswererKeepsToItsLimits(t *testing.T) {
 	var mu sync.Mutex
 	now := time.Date(2026, 11, 20, 10, 0, 0, 0, time.Local)
@@ -232,7 +232,7 @@ func TestTheAnswererKeepsToItsLimits(t *testing.T) {
 	ts := h.fake.Say(t, slacktest.DMChannel, "im", owner, "slow")
 	h.postIn(ts, is("Stopped: the answer ran out of time (300ms)."))
 	_, out, _ := h.run("", "status")
-	assert.Contains(t, out, "$0.50 of $2.00 spent today", "a run that was ended is charged its whole budget")
+	assert.Contains(t, out, "$0.50 spent today", "a run that was ended is charged its whole budget")
 
 	r.mu.Lock()
 	r.answer = func(context.Context, string) (answerer.Result, error) {
@@ -247,15 +247,32 @@ func TestTheAnswererKeepsToItsLimits(t *testing.T) {
 	r.mu.Unlock()
 	ts = h.fake.Say(t, slacktest.DMChannel, "im", owner, "one more")
 	h.postIn(ts, is("fine"))
+	ts = h.fake.Say(t, slacktest.DMChannel, "im", owner, "past the cap")
+	h.postIn(ts, is("fine")) // an admin has no daily cap
+
+	// Users share the day's cap: two of them spend past it, and the next
+	// user question is refused, until the next day.
+	for _, u := range []string{"U00000003", "U00000004"} {
+		code, _, errOut := h.run("", "users", "add", u, "--dm")
+		require.Equal(t, 0, code, errOut)
+	}
+	for _, u := range []string{"U00000003", "U00000004", "U00000004"} {
+		ts = h.fake.Say(t, slacktest.DMChannel, "im", u, "a user's question")
+		h.postIn(ts, is("fine"))
+	}
 	runs := len(r.runs())
-	ts = h.fake.Say(t, slacktest.DMChannel, "im", owner, "over the cap")
-	h.postIn(ts, startsWith("Not answered: the answerer has used today's budget ($2.00)"))
+	ts = h.fake.Say(t, slacktest.DMChannel, "im", "U00000003", "over the users' cap")
+	h.postIn(ts, startsWith("Not answered: today's budget for questions from users ($2.00) is used up."))
 	noRunFor(t, r, runs)
+	_, out, _ = h.run("", "status")
+	assert.Contains(t, out, "$2.70 of $2.00 by users")
+	ts = h.fake.Say(t, slacktest.DMChannel, "im", owner, "and the admin?")
+	h.postIn(ts, is("fine")) // the users' cap is not the admin's
 
 	mu.Lock()
 	now = now.Add(24 * time.Hour)
 	mu.Unlock()
-	ts = h.fake.Say(t, slacktest.DMChannel, "im", owner, "next day")
+	ts = h.fake.Say(t, slacktest.DMChannel, "im", "U00000003", "next day")
 	h.postIn(ts, is("fine"))
 }
 

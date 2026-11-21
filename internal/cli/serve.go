@@ -13,6 +13,7 @@ import (
 
 	"github.com/ushineko/hikyaku/internal/access"
 	"github.com/ushineko/hikyaku/internal/answerer"
+	"github.com/ushineko/hikyaku/internal/chart"
 	"github.com/ushineko/hikyaku/internal/ipc"
 	"github.com/ushineko/hikyaku/internal/paths"
 	"github.com/ushineko/hikyaku/internal/persona"
@@ -75,7 +76,9 @@ func serve(ctx context.Context, env *Env, debug bool) error {
 	sc := slackio.New(slackio.Options{BotToken: vals[secret.Bot], AppToken: vals[secret.App], APIURL: env.APIURL, Log: log})
 	runner := env.Runner
 	plainRunner := env.PlainRunner
+	charts := env.Charts
 	if runner == nil {
+		charts = findCharts(s.Answerer.Charts, log)
 		c := answerer.Claude{Settings: s.Answerer, Env: answerer.CleanEnv(os.Environ(), redact)}
 		if home, err := os.UserHomeDir(); err == nil {
 			c.ReadDir = filepath.Join(home, "git")
@@ -91,7 +94,7 @@ func serve(ctx context.Context, env *Env, debug bool) error {
 		Poster: sc, Listener: sc, Store: st, Settings: s, Log: log, Redact: redact, Now: env.Now,
 		Runner: runner, AnswererState: filepath.Join(filepath.Dir(env.StatePath), "answerer.json"),
 		Persona:     &persona.Loader{Path: env.personaPath(s), Log: log},
-		PlainRunner: plainRunner, Access: users, Paths: answerPaths(),
+		PlainRunner: plainRunner, Access: users, Paths: answerPaths(), Charts: charts,
 	})
 	if err != nil {
 		return fail(ExitError, "%v", err)
@@ -132,4 +135,21 @@ func answerPaths() answerer.Paths {
 		return answerer.Paths{}
 	}
 	return answerer.Paths{Home: home, Source: filepath.Join(home, "git")}
+}
+
+// findCharts is the chart renderer (spec 011): the system's bubblewrap and
+// mermaid-cli, or none, with the reason logged.
+func findCharts(setting string, log *slog.Logger) service.Charter {
+	if setting == "off" {
+		log.Info("charts are off in the settings")
+		return nil
+	}
+	home, _ := os.UserHomeDir()
+	r, why := chart.Find(home)
+	if r == nil {
+		log.Info("charts are off: "+why+"; diagrams are posted as code", "need", "bubblewrap and mermaid-cli")
+		return nil
+	}
+	log.Info("charts are on", "bwrap", r.Bwrap, "mmdc", r.Mmdc)
+	return r
 }

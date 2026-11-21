@@ -129,7 +129,8 @@ type AnswererStatus struct {
 	Running bool    `json:"running"`
 	Queued  int     `json:"queued"`
 	Spent   float64 `json:"spent_usd"`
-	Cap     float64 `json:"day_cap_usd"`
+	// Cap is the day's cap on users' spending; admins have none.
+	Cap float64 `json:"day_cap_usd"`
 	// UsersSpent is what users other than admins spent today, within Spent.
 	UsersSpent float64 `json:"users_spent_usd,omitempty"`
 }

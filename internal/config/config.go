@@ -73,6 +73,9 @@ type Answerer struct {
 	DayBudgetUSD float64 `yaml:"day_budget_usd,omitempty"`
 	// RunTimeout is how long a run may take, as a Go duration.
 	RunTimeout string `yaml:"run_timeout,omitempty"`
+	// Charts is "off" to post diagrams as code instead of drawing them
+	// (spec 011); anything else draws them when the renderer is installed.
+	Charts string `yaml:"charts,omitempty"`
 }
 
 // Answerer defaults (spec 007, D4 and D5).

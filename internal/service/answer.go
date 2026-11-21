@@ -13,6 +13,7 @@ import (
 
 	"github.com/ushineko/hikyaku/internal/answerer"
 	"github.com/ushineko/hikyaku/internal/atomicfile"
+	"github.com/ushineko/hikyaku/internal/chart"
 	"github.com/ushineko/hikyaku/internal/config"
 	"github.com/ushineko/hikyaku/internal/ipc"
 	"github.com/ushineko/hikyaku/internal/slackio"
@@ -26,13 +27,15 @@ const (
 
 // The bot's notes about the answerer, in a question's thread.
 const (
-	noteBusy      = "Busy: three questions are already waiting. Ask again in a few minutes."
-	noteOff       = "Not answered: the answerer was switched off."
-	noteStopped   = "Stopped: the answerer was switched off."
-	noteFailed    = "The answer failed. The service's log says how."
-	noteRedacted  = "Something that looked like a secret was removed from this answer."
-	noteFollowUps = "This thread has had its ten follow-ups. Ask a new question at the top level."
-	noteUserCap   = "That's my limit for you today. Ask again tomorrow."
+	noteBusy             = "Busy: three questions are already waiting. Ask again in a few minutes."
+	noteOff              = "Not answered: the answerer was switched off."
+	noteStopped          = "Stopped: the answerer was switched off."
+	noteFailed           = "The answer failed. The service's log says how."
+	noteRedacted         = "Something that looked like a secret was removed from this answer."
+	noteChartAttached    = "_(chart attached)_"
+	noteChartNotAttached = "The chart could not be attached; here is its source."
+	noteFollowUps        = "This thread has had its ten follow-ups. Ask a new question at the top level."
+	noteUserCap          = "That's my limit for you today. Ask again tomorrow."
 )
 
 // userDayBudget is what one user's runs may cost in a day (spec 009, R6).
@@ -120,6 +123,16 @@ func newDesk(r, plain answerer.Runner, settings config.Answerer, path string) (*
 	return d, nil
 }
 
+// usersSpentLocked is what everyone but the admins spent today. d.mu is
+// held.
+func (d *desk) usersSpentLocked() float64 {
+	total := 0.0
+	for _, v := range d.st.SpentBy {
+		total += v
+	}
+	return total
+}
+
 // saveLocked writes the state. d.mu is held.
 func (d *desk) saveLocked() error {
 	b, err := json.Marshal(d.st)
@@ -183,13 +196,9 @@ func (s *Service) answerStatus() ipc.AnswererStatus {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.todayLocked(s.now())
-	users := 0.0
-	for _, v := range d.st.SpentBy {
-		users += v
-	}
 	return ipc.AnswererStatus{
 		On: d.st.On, Running: d.running, Queued: len(d.queue),
-		Spent: d.st.Spent, Cap: d.settings.DayBudget(), UsersSpent: users,
+		Spent: d.st.Spent, Cap: d.settings.DayBudget(), UsersSpent: d.usersSpentLocked(),
 	}
 }
 
@@ -311,16 +320,22 @@ func (s *Service) answer1(runCtx, ctx context.Context, q question) {
 	d := s.desk
 	d.mu.Lock()
 	d.todayLocked(s.now())
-	spent, dayCap := d.st.Spent, d.settings.DayBudget()
+	usersSpent, dayCap := d.usersSpentLocked(), d.settings.DayBudget()
 	userSpent := d.st.SpentBy[q.asker]
 	d.mu.Unlock()
-	if spent >= dayCap {
-		s.note(ctx, q, fmt.Sprintf("Not answered: the answerer has used today's budget ($%.2f). It answers again after midnight.", dayCap))
-		return
-	}
-	if !s.isAdmin(q.asker) && userSpent >= userDayBudget {
-		s.note(ctx, q, noteUserCap)
-		return
+	// Admins have no daily cap (owner, 2026-11-20); everyone else shares
+	// the day's budget, and each has their own (spec 009, R6). The per-run
+	// budget and time limit apply to all.
+	if !s.isAdmin(q.asker) {
+		if usersSpent >= dayCap {
+			s.note(ctx, q, fmt.Sprintf("Not answered: today's budget for questions from users ($%.2f) is used up. "+
+				"It resets after midnight.", dayCap))
+			return
+		}
+		if userSpent >= userDayBudget {
+			s.note(ctx, q, noteUserCap)
+			return
+		}
 	}
 	p := s.persona.Get()
 	if q.msgTS != "" {
@@ -392,12 +407,81 @@ func (s *Service) answer1(runCtx, ctx context.Context, q question) {
 // postAnswer posts an answer in its question's thread (R6), with secrets
 // and contact details removed (R10), and keeps the exchange for follow-ups.
 func (s *Service) postAnswer(ctx context.Context, q question, text string) {
-	text, body := s.clean(text)
-	s.publish(ctx, q, text, body)
+	text, note := s.clean(text)
+	// Charts are taken from the cleaned text, so what is drawn has been
+	// scrubbed too (spec 011).
+	text, charts := s.renderCharts(ctx, text)
+	channel, thread, ok := s.publish(ctx, q, text, slackio.Neutralize(text)+note)
+	if ok {
+		s.uploadCharts(ctx, channel, thread, charts)
+	}
 }
 
-// clean scrubs an answer (spec 007, R10) and returns it and the body to
-// post, with mentions neutralized and a line when a secret was removed.
+// Charter renders a Mermaid diagram to a PNG (spec 011).
+type Charter interface {
+	Render(ctx context.Context, src string) ([]byte, error)
+}
+
+// rendered is one chart: its image, and its source for when the image
+// cannot be shared.
+type rendered struct {
+	png []byte
+	src string
+}
+
+// renderCharts renders the answer's Mermaid blocks, each replaced by a
+// note that it is attached; a block that does not render stays as code.
+// Without a charter, the text is left as it is.
+func (s *Service) renderCharts(ctx context.Context, text string) (string, []rendered) {
+	// Without a renderer, or once Slack has refused an upload for want of
+	// files:write, the diagram stays as the code the run wrote rather than
+	// promising an attachment that cannot come.
+	if s.charter == nil || s.noFiles.Load() {
+		return text, nil
+	}
+	text, sources := chart.Extract(text)
+	var out []rendered
+	for i, src := range sources {
+		with := noteChartAttached
+		png, err := s.charter.Render(ctx, src)
+		if err != nil {
+			s.log.Warn("render a chart; its source is posted instead", "err", s.redact.String(err.Error()))
+			with = chart.AsCode(src)
+		} else {
+			out = append(out, rendered{png: png, src: src})
+		}
+		text = strings.Replace(text, chart.Placeholder(i), with, 1)
+	}
+	return text, out
+}
+
+// uploadCharts shares each chart after its answer, in the same place;
+// one that cannot be shared is posted as its source.
+func (s *Service) uploadCharts(ctx context.Context, channel, thread string, charts []rendered) {
+	for i, c := range charts {
+		err := s.poster.Upload(ctx, channel, thread, fmt.Sprintf("chart-%d.png", i+1), "Chart", c.png)
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, slackio.ErrMissingScope) {
+			if s.noFiles.CompareAndSwap(false, true) {
+				s.log.Warn("the Slack app has no files:write scope; charts are posted as their source. " +
+					"Add the scope and reinstall the app")
+			}
+		} else {
+			s.log.Warn("upload a chart", "err", s.redact.String(err.Error()))
+		}
+		if _, _, err := s.poster.Post(ctx, channel, slackio.Outgoing{
+			Text:     "_" + noteChartNotAttached + "_\n" + slackio.Neutralize(chart.AsCode(c.src)),
+			ThreadTS: thread, NoUnfurl: true,
+		}); err != nil {
+			s.log.Warn("post a chart's source", "err", s.redact.String(err.Error()))
+		}
+	}
+}
+
+// clean scrubs an answer (spec 007, R10) and returns it, and a line to add
+// when a secret was removed.
 func (s *Service) clean(text string) (string, string) {
 	text, paths := s.paths.Generalize(text)
 	if paths > 0 {
@@ -411,16 +495,15 @@ func (s *Service) clean(text string) (string, string) {
 	if n != (answerer.Scrubbed{}) {
 		s.log.Info("answerer scrubbed an answer", "secrets", n.Secrets, "emails", n.Emails, "phones", n.Phones)
 	}
-	body := slackio.Neutralize(text)
 	if n.Secrets > 0 {
-		body += "\n\n_" + noteRedacted + "_"
+		return text, "\n\n_" + noteRedacted + "_"
 	}
-	return text, body
+	return text, ""
 }
 
 // publish posts a cleaned answer in its question's thread and keeps the
-// exchange for follow-ups.
-func (s *Service) publish(ctx context.Context, q question, text, body string) {
+// exchange for follow-ups. It reports where the answer went.
+func (s *Service) publish(ctx context.Context, q question, text, body string) (string, string, bool) {
 	d := s.desk
 	thread := q.root
 	if q.topLevel {
@@ -431,7 +514,7 @@ func (s *Service) publish(ctx context.Context, q question, text, body string) {
 	})
 	if err != nil {
 		s.log.Warn("post an answer", "err", s.redact.String(err.Error()))
-		return
+		return "", "", false
 	}
 	if _, err := s.store.Add(posted, ts, thread); err != nil {
 		s.log.Error("record answer", "err", err)
@@ -454,6 +537,7 @@ func (s *Service) publish(ctx context.Context, q question, text, body string) {
 	if q.msgTS != "" {
 		go s.reactions(q.channel, q.msgTS, reactAnswered, reactTaken, slackio.Outgoing{})
 	}
+	return posted, thread, true
 }
 
 // note posts one of the bot's notes in a question's thread.

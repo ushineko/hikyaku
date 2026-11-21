@@ -71,6 +71,10 @@ type Service struct {
 	access *access.List
 	self   string
 	paths  answerer.Paths
+	// charter renders charts; noFiles is set once Slack has said the app
+	// lacks files:write.
+	charter Charter
+	noFiles atomic.Bool
 }
 
 // Deps is what a Service is built from.
@@ -96,6 +100,8 @@ type Deps struct {
 	Access *access.List
 	// Paths are the folders whose absolute paths answers must not show.
 	Paths answerer.Paths
+	// Charts renders answers' diagrams (spec 011); nil leaves them as code.
+	Charts Charter
 }
 
 // New builds a Service.
@@ -115,7 +121,7 @@ func New(d Deps) (*Service, error) {
 		waiters: map[string][]chan store.Reply{}, listeners: map[string]*listener{},
 		instrs: map[string]*instr{}, owners: map[string]string{}, convo: map[string]string{},
 		bg: context.Background(), persona: d.Persona,
-		admins: d.Settings.AdminIDs(), access: d.Access, paths: d.Paths,
+		admins: d.Settings.AdminIDs(), access: d.Access, paths: d.Paths, charter: d.Charts,
 	}
 	if d.Runner != nil {
 		desk, err := newDesk(d.Runner, d.PlainRunner, d.Settings.Answerer, d.AnswererState)

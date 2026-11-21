@@ -30,6 +30,7 @@ set up by hand.
 - [The answerer](#the-answerer)
 - [The persona](#the-persona)
 - [Roles and channels](#roles-and-channels)
+- [Charts](#charts)
 - [Settings](#settings)
 - [Scopes](#scopes)
 - [Security](#security)
@@ -246,8 +247,8 @@ it is automated and may be wrong.
 Only the owner can start a run. `allowed_repliers` can answer agents but
 not start runs. Slack cannot switch the answerer on.
 
-Limits: one run at a time, five minutes and $0.50 a run, $5 a day (local
-midnight). The runs use your Claude Code login. The service logs each run's
+Limits: one run at a time, five minutes and $0.50 a run. Admins have no
+daily cap; users share $5 a day (local midnight) and have $1 each. The runs use your Claude Code login. The service logs each run's
 duration, cost and denied tool calls, and not the question or the answer.
 A run cut off by its time limit or by `off` reports no cost, so it is
 counted at its whole $0.50.
@@ -317,7 +318,8 @@ a reply.
   reactions on the asking message: 👀 working, ✅ answered.
 - **A user's answer reads nothing**: the run has no tools at all, so it
   answers from general knowledge and the thread, never from your GitLab,
-  Jira or repositories. A user may spend $1 a day, within the shared $5.
+  Jira or repositories. A user may spend $1 a day, and users together $5;
+  admins have no daily cap.
 - **An admin's question** gets the full answerer, in a channel as in the
   DM, posted where it was asked. Everyone in the channel reads it, so ask
   there only what the channel may see; secrets, emails and phone numbers
@@ -326,6 +328,24 @@ a reply.
   repository is named by its path inside it (`hikyaku/internal/cli/cli.go`),
   anything else on the machine becomes `[a local path]`, and questions about
   personal files outside the repositories are declined.
+
+## Charts
+
+Ask for a chart, a diagram or a picture of some data ("chart the releases
+this month", "draw how a question flows through hikyaku") and the answer
+comes with an image. The run writes a Mermaid diagram; the service draws
+it on this machine and attaches it as a PNG under the answer.
+
+Drawing needs [bubblewrap](https://github.com/containers/bubblewrap) and
+[mermaid-cli](https://github.com/mermaid-js/mermaid-cli) (`mmdc`, with the
+system's Node and Chromium). Without them, or with `answerer.charts: off`,
+the diagram is posted as code; the service says at start which it is.
+
+The renderer is a browser engine running over text a model wrote, so it
+runs boxed: no network at all, your home directory and `/run` hidden, an
+empty environment, one scratch folder, Mermaid's strict mode, and limits
+on size and time. The diagram is scrubbed like the answer before it is
+drawn. See the threat model, S8.
 
 ## Settings
 
@@ -340,10 +360,11 @@ a reply.
 | `answerer.allowed_tools` | Replaces the answerer's read-only allow-list | see [The answerer](#the-answerer) |
 | `answerer.mcp_config` | MCP configuration file for the answerer's runs | none |
 | `answerer.run_budget_usd` | Cost cap of one run | `0.50` |
-| `answerer.day_budget_usd` | Cost cap of a day | `5.00` |
+| `answerer.day_budget_usd` | What users may spend together in a day; admins have no daily cap | `5.00` |
 | `answerer.run_timeout` | Time limit of one run | `5m` |
 | `answerer.model` | Model for the runs | Claude Code's default |
 | `answerer.claude` | The Claude Code command | `claude` |
+| `answerer.charts` | `off` to post diagrams as code rather than draw them | drawn when bubblewrap and mermaid-cli are installed |
 | `admins` | Slack user IDs of the admins | the owner |
 | `persona` | The persona file, absolute or relative to the settings | `SOUL.md` beside the settings |
 
@@ -364,6 +385,7 @@ manifest disagree.
 | `channels:history` | Hear thread replies in a public channel posted to with `--channel`, and @-mentions in a channel the bot is in |
 | `groups:history` | The same, in a private channel |
 | `reactions:write` | Mark your messages to agents as waiting, taken, answered or not delivered |
+| `files:write` | Attach a chart the answerer drew to its answer |
 | `channels:read` | Hear that the bot was added to a public channel, and by whom, so it can leave when that was not an admin |
 | `groups:read` | The same, for a private channel |
 | `channels:join` | Join a public channel when an admin asks from the DM |
@@ -406,6 +428,13 @@ Go 1.26 or newer.
 ## Changelog
 
 ### Unreleased
+
+- Admins have no daily cost cap; the day's cap (`answerer.day_budget_usd`)
+  now applies to users' questions together, with $1 each. The per-run cap
+  and time limit apply to everyone.
+- Charts: ask for a chart or a diagram and the answer comes with a PNG,
+  drawn locally from Mermaid in a bubblewrap box with no network and no view
+  of your home directory. Needs the new `files:write` scope (spec 011).
 
 - Roles: admins and users. The bot can be put in channels by an admin,
   answers @-mentions where they were asked, and leaves if someone else

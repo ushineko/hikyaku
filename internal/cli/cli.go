@@ -22,6 +22,7 @@ import (
 	"github.com/ushineko/hikyaku/internal/ipc"
 	"github.com/ushineko/hikyaku/internal/paths"
 	"github.com/ushineko/hikyaku/internal/secret"
+	"github.com/ushineko/hikyaku/internal/service"
 )
 
 // Exit codes. 124 for a timeout is what timeout(1) uses, so a script that
@@ -71,6 +72,9 @@ type Env struct {
 	// PlainRunner overrides the runs for people other than an admin, which
 	// read nothing (spec 009); with Runner set and this nil, Runner is used.
 	PlainRunner answerer.Runner
+	// Charts overrides the chart renderer (spec 011), for tests; with
+	// Runner set and this nil, charts are off.
+	Charts service.Charter
 	// Now overrides the service's clock, for tests.
 	Now func() time.Time
 }
