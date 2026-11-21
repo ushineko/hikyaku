@@ -29,6 +29,7 @@ set up by hand.
 - [Listening for instructions](#listening-for-instructions)
 - [The answerer](#the-answerer)
 - [The persona](#the-persona)
+- [Roles and channels](#roles-and-channels)
 - [Settings](#settings)
 - [Scopes](#scopes)
 - [Security](#security)
@@ -227,7 +228,10 @@ of those tools:
 - Jira's read tools, through the Atlassian MCP server, when
   `answerer.mcp_config` names a configuration for it;
 - `git log`, `git show`, `git status`, `git tag --list` and `git describe`,
-  and reading files under `~/git`.
+  and reading files under `~/git`;
+- a repository's address (`git remote get-url`, `git remote -v`,
+  `gh repo view`, `glab repo view`), so an answer can link the spec, file,
+  MR or ticket it names.
 
 Anything else it tries is denied without a prompt. Files that hold
 credentials (`.env*`, `*.key`, `*.pem`, SSH keys, `.netrc`,
@@ -274,6 +278,7 @@ Its sections, each optional (a missing one falls back to the default's):
 | `## Name` | The bot's name. It starts the answerer's origin line, and `<name>: …` reaches the answerer like `answerer: …` |
 | `## Voice` | How the answerer writes. It goes into each run's prompt after the answerer's rules, as style guidance; the rules win |
 | `## Started` | The notes a run starts with, one picked at random |
+| `## References` | Where the answerer's references come from; each answer is told one, picked at random, so it does not keep using the same |
 | `## Emoji`, `## Asides` | Added to the bot's notes now and then: an emoji at the end, an aside on a line of its own. A note's own words are never changed |
 | `## Chances` | `- emoji: 1 in 3`, `- aside: 1 in 8`, or `never` |
 
@@ -281,6 +286,46 @@ Edits apply to the next note, with no restart. Agents' own messages and the
 answerer's answers get no emoji or asides; nothing from the file can mention
 anyone. The name in Slack's sidebar is the app's own display name, set in
 the app's settings.
+
+## Roles and channels
+
+Two roles. **Admins** are the `admins` setting, the owner by default.
+**Users** are listed at the desktop:
+
+```bash
+hikyaku users                    # who has access, and what they spent today
+hikyaku users add U0123ABCD      # may talk to the bot in channels it is in
+hikyaku users add U0123ABCD --dm # ...and in a DM
+hikyaku users dm U0123ABCD off
+hikyaku users remove U0123ABCD
+```
+
+Nothing typed in Slack changes this list. Everyone else is ignored, without
+a reply.
+
+- **Putting the bot in a channel** is for admins: invite it with an
+  @-mention, or DM it `join #channel` (a public channel; a private one has
+  to invite it from inside). `leave #channel` in the DM, or `@bot leave` in
+  the channel, takes it out. If someone who is not an admin adds it, it
+  leaves and tells the admins.
+- **In a channel**, the bot answers only an @-mention from an admin or a
+  user, and answers where it was asked: a top-level mention gets a
+  top-level answer, a mention in a thread an answer in that thread, with
+  the thread so far as context. In the thread under the bot's own
+  top-level answer, the person who asked can reply without a mention;
+  anyone else, and any other thread, needs one. Progress shows as
+  reactions on the asking message: 👀 working, ✅ answered.
+- **A user's answer reads nothing**: the run has no tools at all, so it
+  answers from general knowledge and the thread, never from your GitLab,
+  Jira or repositories. A user may spend $1 a day, within the shared $5.
+- **An admin's question** gets the full answerer, in a channel as in the
+  DM, posted where it was asked. Everyone in the channel reads it, so ask
+  there only what the channel may see; secrets, emails and phone numbers
+  are scrubbed as always.
+- **No paths from your machine** appear in any answer: a file in a
+  repository is named by its path inside it (`hikyaku/internal/cli/cli.go`),
+  anything else on the machine becomes `[a local path]`, and questions about
+  personal files outside the repositories are declined.
 
 ## Settings
 
@@ -299,6 +344,7 @@ the app's settings.
 | `answerer.run_timeout` | Time limit of one run | `5m` |
 | `answerer.model` | Model for the runs | Claude Code's default |
 | `answerer.claude` | The Claude Code command | `claude` |
+| `admins` | Slack user IDs of the admins | the owner |
 | `persona` | The persona file, absolute or relative to the settings | `SOUL.md` beside the settings |
 
 Messages and replies are kept in `~/.local/state/hikyaku/messages.json`
@@ -315,9 +361,14 @@ manifest disagree.
 | `chat:write` | Post messages, and the `/me` notice that an agent stopped listening |
 | `im:write` | Open the DM with the owner |
 | `im:history` | Hear thread replies in the DM |
-| `channels:history` | Hear thread replies in a public channel posted to with `--channel` |
-| `groups:history` | Hear thread replies in a private channel posted to with `--channel` |
+| `channels:history` | Hear thread replies in a public channel posted to with `--channel`, and @-mentions in a channel the bot is in |
+| `groups:history` | The same, in a private channel |
 | `reactions:write` | Mark your messages to agents as waiting, taken, answered or not delivered |
+| `channels:read` | Hear that the bot was added to a public channel, and by whom, so it can leave when that was not an admin |
+| `groups:read` | The same, for a private channel |
+| `channels:join` | Join a public channel when an admin asks from the DM |
+| `channels:manage` | Leave a public channel when an admin asks |
+| `groups:write` | Leave a private channel when an admin asks |
 
 The app-level token carries `connections:write`, which opens the Socket Mode
 connection.
@@ -355,6 +406,12 @@ Go 1.26 or newer.
 ## Changelog
 
 ### Unreleased
+
+- Roles: admins and users. The bot can be put in channels by an admin,
+  answers @-mentions where they were asked, and leaves if someone else
+  adds it. Users' answers read nothing; an admin's get the full answerer.
+  `hikyaku users` (spec 009). An app icon,
+  `docs/img/icon.png`.
 
 - The answerer can list a repository's tags (`git tag --list`,
   `git describe`), so "what's the latest release?" works from the tags.

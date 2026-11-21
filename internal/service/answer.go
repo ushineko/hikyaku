@@ -32,7 +32,11 @@ const (
 	noteFailed    = "The answer failed. The service's log says how."
 	noteRedacted  = "Something that looked like a secret was removed from this answer."
 	noteFollowUps = "This thread has had its ten follow-ups. Ask a new question at the top level."
+	noteUserCap   = "That's my limit for you today. Ask again tomorrow."
 )
+
+// userDayBudget is what one user's runs may cost in a day (spec 009, R6).
+const userDayBudget = 1.00
 
 // errSwitchedOff is why a run is cancelled by `answerer off`.
 var errSwitchedOff = errors.New("the answerer was switched off")
@@ -43,6 +47,8 @@ type answerState struct {
 	On    bool    `json:"on"`
 	Day   string  `json:"day,omitempty"`
 	Spent float64 `json:"spent_usd,omitempty"`
+	// SpentBy is today's spending by user other than an admin (spec 009).
+	SpentBy map[string]float64 `json:"spent_by,omitempty"`
 }
 
 // question is one question waiting for, or having, a run.
@@ -53,17 +59,32 @@ type question struct {
 	root    string
 	text    string
 	earlier []answerer.Turn
+	// asker is who asked; plain runs read nothing (spec 009, R3).
+	asker string
+	plain bool
+	// msgTS is the asking message in a channel, which shows progress as
+	// reactions; topLevel posts the answer beside it rather than in a
+	// thread; thread is the channel thread so far (spec 009, R2).
+	msgTS    string
+	topLevel bool
+	thread   []answerer.Line
 }
 
 // exchange is an answered thread, kept for follow-ups.
 type exchange struct {
 	turns     []answerer.Turn
 	followUps int
+	// asker and channel are who asked a channel question answered at the
+	// top level, and where: in that answer's thread, the asker may reply
+	// without a mention (spec 009, R2).
+	asker, channel string
 }
 
 // desk is the answerer's state in the service.
 type desk struct {
-	runner   answerer.Runner
+	runner answerer.Runner
+	// plain runs with no tools (spec 009, R3).
+	plain    answerer.Runner
 	settings config.Answerer
 	path     string
 	from     string
@@ -77,8 +98,12 @@ type desk struct {
 	wake    chan struct{}
 }
 
-func newDesk(r answerer.Runner, settings config.Answerer, path string) (*desk, error) {
-	d := &desk{runner: r, settings: settings, path: path, threads: map[string]*exchange{}, wake: make(chan struct{}, 1)}
+func newDesk(r, plain answerer.Runner, settings config.Answerer, path string) (*desk, error) {
+	if plain == nil {
+		plain = r
+	}
+	d := &desk{runner: r, plain: plain, settings: settings, path: path, threads: map[string]*exchange{},
+		wake: make(chan struct{}, 1)}
 	host, _ := os.Hostname()
 	host, _, _ = strings.Cut(host, ".")
 	d.from = " · " + host + " · an automated answer from the sources, which may be wrong"
@@ -107,7 +132,7 @@ func (d *desk) saveLocked() error {
 // todayLocked starts a new day's spending when the date has changed.
 func (d *desk) todayLocked(now time.Time) {
 	if day := now.Local().Format(time.DateOnly); d.st.Day != day {
-		d.st.Day, d.st.Spent = day, 0
+		d.st.Day, d.st.Spent, d.st.SpentBy = day, 0, nil
 	}
 }
 
@@ -158,26 +183,50 @@ func (s *Service) answerStatus() ipc.AnswererStatus {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.todayLocked(s.now())
+	users := 0.0
+	for _, v := range d.st.SpentBy {
+		users += v
+	}
 	return ipc.AnswererStatus{
 		On: d.st.On, Running: d.running, Queued: len(d.queue),
-		Spent: d.st.Spent, Cap: d.settings.DayBudget(),
+		Spent: d.st.Spent, Cap: d.settings.DayBudget(), UsersSpent: users,
 	}
 }
 
 // offerQuestion gives the answerer a top-level DM that no listener took
-// (R2). It reports whether the answerer took it.
+// (spec 007, R2): an admin's gets the full answerer, a user's with the DM
+// grant a plain one (spec 009, R2). It reports whether the answerer took
+// it.
 func (s *Service) offerQuestion(ctx context.Context, channel, ts, user, text string) bool {
-	if s.desk == nil || user != s.settings.Owner {
+	if s.desk == nil {
 		return false
 	}
-	return s.enqueue(ctx, question{channel: channel, root: ts, text: text}, true)
+	q := question{channel: channel, root: ts, text: text, asker: user}
+	switch {
+	case s.isAdmin(user):
+	case s.mayDM(user):
+		q.plain = true
+	default:
+		return false
+	}
+	return s.enqueue(ctx, q, true)
 }
 
 // offerFollowUp gives the answerer a reply in one of its answers' threads,
-// when no agent waits on that thread (R9).
+// when no agent waits on that thread (spec 007, R9). inDM says where the thread is.
+// In a channel, a reply is a question only with a mention, which
+// channelMessage handles (spec 009, R2), so this is for DMs.
 func (s *Service) offerFollowUp(ctx context.Context, channel, root, user, text string) {
 	d := s.desk
-	if d == nil || user != s.settings.Owner {
+	if d == nil {
+		return
+	}
+	q := question{channel: channel, root: root, text: text, asker: user}
+	switch {
+	case s.isAdmin(user):
+	case s.mayDM(user):
+		q.plain = true
+	default:
 		return
 	}
 	d.mu.Lock()
@@ -192,9 +241,9 @@ func (s *Service) offerFollowUp(ctx context.Context, channel, root, user, text s
 		return
 	}
 	ex.followUps++
-	earlier := slices.Clone(ex.turns)
+	q.earlier = slices.Clone(ex.turns)
 	d.mu.Unlock()
-	s.enqueue(ctx, question{channel: channel, root: root, text: text, earlier: earlier}, false)
+	s.enqueue(ctx, q, false)
 }
 
 // enqueue queues q, telling the owner when it has to wait or cannot (R5).
@@ -263,15 +312,28 @@ func (s *Service) answer1(runCtx, ctx context.Context, q question) {
 	d.mu.Lock()
 	d.todayLocked(s.now())
 	spent, dayCap := d.st.Spent, d.settings.DayBudget()
+	userSpent := d.st.SpentBy[q.asker]
 	d.mu.Unlock()
 	if spent >= dayCap {
 		s.note(ctx, q, fmt.Sprintf("Not answered: the answerer has used today's budget ($%.2f). It answers again after midnight.", dayCap))
 		return
 	}
+	if !s.isAdmin(q.asker) && userSpent >= userDayBudget {
+		s.note(ctx, q, noteUserCap)
+		return
+	}
 	p := s.persona.Get()
-	s.note(ctx, q, p.StartedNote())
+	if q.msgTS != "" {
+		go s.reactions(q.channel, q.msgTS, reactTaken, "", slackio.Outgoing{})
+	} else {
+		s.note(ctx, q, slackio.Neutralize(p.StartedNote())) // the persona's words, not the service's
+	}
 
-	prompt, err := answerer.Prompt(q.text, q.earlier, p.Voice)
+	makePrompt, runner := answerer.Prompt, d.runner
+	if q.plain {
+		makePrompt, runner = answerer.PlainPrompt, d.plain
+	}
+	prompt, err := makePrompt(q.text, q.earlier, p.VoiceForAnswer(), q.thread...)
 	if err != nil {
 		s.log.Error("answerer prompt", "err", err)
 		s.note(ctx, q, noteFailed)
@@ -280,7 +342,7 @@ func (s *Service) answer1(runCtx, ctx context.Context, q question) {
 	timeout := d.settings.Timeout()
 	tctx, cancel := context.WithTimeout(runCtx, timeout)
 	start := time.Now()
-	res, err := d.runner.Run(tctx, prompt)
+	res, err := runner.Run(tctx, prompt)
 	timedOut := errors.Is(tctx.Err(), context.DeadlineExceeded)
 	cancel()
 	if err != nil {
@@ -292,13 +354,19 @@ func (s *Service) answer1(runCtx, ctx context.Context, q question) {
 	d.mu.Lock()
 	d.todayLocked(s.now())
 	d.st.Spent += res.CostUSD
+	if !s.isAdmin(q.asker) && q.asker != "" {
+		if d.st.SpentBy == nil {
+			d.st.SpentBy = map[string]float64{}
+		}
+		d.st.SpentBy[q.asker] += res.CostUSD
+	}
 	if serr := d.saveLocked(); serr != nil {
 		s.log.Error("save answerer state", "err", serr)
 	}
 	d.mu.Unlock()
 	s.log.Info("answerer run", "duration", time.Since(start).Round(time.Millisecond),
 		"cost_usd", res.CostUSD, "cost_reported", err == nil, "denied", len(res.Denials), "ended", res.Detail,
-		"follow_up", len(q.earlier) > 0)
+		"follow_up", len(q.earlier) > 0, "plain", q.plain)
 	if len(res.Denials) > 0 {
 		s.log.Info("answerer run denied", "calls", res.Denials)
 	}
@@ -324,7 +392,17 @@ func (s *Service) answer1(runCtx, ctx context.Context, q question) {
 // postAnswer posts an answer in its question's thread (R6), with secrets
 // and contact details removed (R10), and keeps the exchange for follow-ups.
 func (s *Service) postAnswer(ctx context.Context, q question, text string) {
-	d := s.desk
+	text, body := s.clean(text)
+	s.publish(ctx, q, text, body)
+}
+
+// clean scrubs an answer (spec 007, R10) and returns it and the body to
+// post, with mentions neutralized and a line when a secret was removed.
+func (s *Service) clean(text string) (string, string) {
+	text, paths := s.paths.Generalize(text)
+	if paths > 0 {
+		s.log.Info("answerer generalized paths in an answer", "paths", paths)
+	}
 	text, n := answerer.Scrub(text)
 	if r := s.redact.String(text); r != text {
 		text = r
@@ -337,24 +415,45 @@ func (s *Service) postAnswer(ctx context.Context, q question, text string) {
 	if n.Secrets > 0 {
 		body += "\n\n_" + noteRedacted + "_"
 	}
+	return text, body
+}
+
+// publish posts a cleaned answer in its question's thread and keeps the
+// exchange for follow-ups.
+func (s *Service) publish(ctx context.Context, q question, text, body string) {
+	d := s.desk
+	thread := q.root
+	if q.topLevel {
+		thread = ""
+	}
 	posted, ts, err := s.poster.Post(ctx, q.channel, slackio.Outgoing{
-		Text: body, From: s.answererName() + d.from, ThreadTS: q.root, NoUnfurl: true,
+		Text: body, From: s.answererName() + d.from, ThreadTS: thread, NoUnfurl: true,
 	})
 	if err != nil {
 		s.log.Warn("post an answer", "err", s.redact.String(err.Error()))
 		return
 	}
-	if _, err := s.store.Add(posted, ts, q.root); err != nil {
+	if _, err := s.store.Add(posted, ts, thread); err != nil {
 		s.log.Error("record answer", "err", err)
 	}
 	d.mu.Lock()
-	ex := d.threads[q.root]
+	key := q.root
+	if q.topLevel {
+		key = ts
+	}
+	ex := d.threads[key]
 	if ex == nil {
 		ex = &exchange{}
-		d.threads[q.root] = ex
+		d.threads[key] = ex
 	}
-	ex.turns = append(ex.turns, answerer.Turn{Question: q.text, Answer: text})
+	if q.topLevel {
+		ex.asker, ex.channel = q.asker, q.channel
+	}
+	ex.turns = append(ex.turns, turnOf(q, text))
 	d.mu.Unlock()
+	if q.msgTS != "" {
+		go s.reactions(q.channel, q.msgTS, reactAnswered, reactTaken, slackio.Outgoing{})
+	}
 }
 
 // note posts one of the bot's notes in a question's thread.

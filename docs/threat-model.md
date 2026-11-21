@@ -33,6 +33,7 @@ an agent; S6 states how far.
 | S4 | What goes to Slack | Whatever an agent chooses to post |
 | S5 | Supply chain | Go modules, CI Actions, releases |
 | S6 | The answerer | The owner's question, into a Claude Code run; its answer, back to Slack |
+| S7 | Roles and channels | Questions from admins and listed users, in channels and DMs; answers back to them |
 
 ## S1 Credentials
 
@@ -172,7 +173,10 @@ answer.
   there whatever the allow-list says; this was found by listing a run's
   tools, not assumed.
 - The allow-list names read-only commands by prefix (`glab mr view`, never
-  `glab api` or `glab mr merge`), `git tag --list` and `git describe` (git
+  `glab api` or `glab mr merge`), a repository's address (`git remote
+  get-url`, exactly `git remote -v`, `gh repo view`, `glab repo view`; git
+  refuses anything but a name after `get-url`, and changing a remote is
+  denied against real Claude Code), `git tag --list` and `git describe` (git
   refuses to delete or make a tag alongside `--list`, checked; making and
   deleting a tag are denied against real Claude Code), and file reads under
   `~/git`. It holds no
@@ -259,6 +263,61 @@ answer.
 - The runs use the owner's Claude Code login, with no spending limit at the
   account level; hikyaku's caps are the only limit.
 - A link in an answer can still be clicked by the owner.
+
+## S7 Roles and channels
+
+Spec 009. Admins (the `admins` setting, the owner by default) and users
+(listed with `hikyaku users`, at the desktop) may talk to the bot; it can be
+put in channels, where it answers @-mentions. This widens S6's "owner only"
+by the owner's decision of 2026-11-20, recorded in `.claude/CLAUDE.md`.
+
+**What is at stake.** The answerer reads with the owner's credentials, so a
+colleague who could start a sourced run could read through it what the
+owner can and they cannot; an answer in a channel is read by everyone there;
+every run is the owner's usage; and a channel the bot is in is one whose
+messages it receives.
+
+**Defences.**
+
+- A run for anyone who is not an admin has no tools at all (`--tools ""`),
+  no MCP server, no readable directory and no allow-list; the flags are the
+  rest of S6's. It answers from what the model knows and the thread's text.
+  Real Claude Code was asked through such a run to read a planted file, run
+  a command and fetch a URL, and did none of them.
+- Only an admin's question runs the full answerer, in a DM or in a
+  channel, and its answer is scrubbed like any other. Sourced answers reach
+  a channel only where an admin asked; there is no review step (spec 009,
+  D4: an approval flow was built and dropped by the owner).
+- Roles are allow-lists changed only at the desktop, over the local socket
+  (S2). Nothing typed in Slack grants access, so a hijacked account cannot
+  hand it out.
+- Anyone without access, and any channel message without a mention outside
+  the bot's threads, gets no reply, so the bot does not confirm it is there;
+  ignored mentions are logged by user ID, without text.
+- Only an admin puts the bot in a channel. If anyone else adds it, it leaves
+  at once and tells the admins.
+- Each user may spend $1 a day, within the shared cap.
+- No answer shows a path from the owner's machine: repository paths are
+  made repository-relative and any other machine path becomes
+  `[a local path]`, after the prompt has asked for the same; personal files
+  outside the repositories are out of scope for questions.
+- Everything in S6 still applies to every run and answer: scrubbing, no
+  mentions, no unfurling, the label, the queue, the off switch.
+
+**Residual risk.**
+
+- A user's answer is the model's, and can be wrong or say what the model
+  knows generally; the label says it is automated.
+- Thread text a user's run reads can carry an injection; with no tools, it
+  can shape only that answer.
+- An admin's sourced answer in a channel is read by everyone there, without
+  review: what the allow-list reaches and the scrubber does not remove
+  (a ticket's text, a private repository's commit messages) can land in a
+  channel the admin asked in. Per-project limits (spec 010) would narrow it.
+- A compromised admin account can start sourced runs, in a DM or a channel,
+  as in S6; the off switch still applies.
+- The bot receives every message in a channel it is in. It keeps only its
+  own threads' exchanges, in memory.
 
 ## Checked
 

@@ -42,6 +42,17 @@ func (f *fakeRunner) runs() []string {
 	return append([]string(nil), f.prompts...)
 }
 
+// plainRunner is the runner for runs that read nothing (spec 009). It
+// records into the same fake, marking each prompt, so a test can tell
+// which runner a question went to.
+type plainRunner struct{ r *fakeRunner }
+
+const plainRunnerMark = "[run by the plain runner]\n"
+
+func (p plainRunner) Run(ctx context.Context, prompt string) (answerer.Result, error) {
+	return p.r.Run(ctx, plainRunnerMark+prompt)
+}
+
 func answers(text string, cost float64) func(context.Context, string) (answerer.Result, error) {
 	return func(context.Context, string) (answerer.Result, error) {
 		return answerer.Result{Outcome: answerer.Answered, Text: text, CostUSD: cost, Detail: "success"}, nil
@@ -59,7 +70,7 @@ func answererHarness(t *testing.T, settings string) (*harness, *fakeRunner) {
 	h := newHarness(t)
 	require.NoError(t, os.WriteFile(h.settings, []byte("owner: "+owner+"\n"+settings), 0o600))
 	r := &fakeRunner{answer: answers("the answer", 0.1)}
-	h.runner = r
+	h.runner, h.plainRunner = r, plainRunner{r}
 	h.serve()
 	return h, r
 }

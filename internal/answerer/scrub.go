@@ -86,3 +86,59 @@ func Scrub(text string) (string, Scrubbed) {
 	text = phonePattern.ReplaceAllStringFunc(text, func(string) string { n.Phones++; return "[phone]" })
 	return text, n
 }
+
+// Paths are the folders whose absolute paths an answer must not show
+// (spec 009): they name the owner and the layout of their disk, and mean
+// nothing to anyone else.
+type Paths struct {
+	// Home is the owner's home directory; Source is the folder the runs
+	// read repositories from (~/git).
+	Home, Source string
+}
+
+// LocalPath is what a path on the machine outside the source folder
+// becomes.
+const LocalPath = "[a local path]"
+
+// localPath matches a path on the machine: under a home directory (~/,
+// /home, /Users, /root) or a system folder. URL paths and API routes
+// (/api/v4/…) do not start with one of these, and are left alone.
+var localPath = regexp.MustCompile(`(?:^|[\s(\x60'"=:])((?:~|/(?:home|Users|root|tmp|var|etc|opt|usr|mnt|media|srv|private))/[^\s\x60'")\]>,;|]*)`)
+
+// Generalize rewrites the machine's paths in an answer (spec 009): a path
+// under Source becomes relative to it, starting with the repository's
+// name; any other path on the machine becomes LocalPath, so an answer
+// names neither the owner nor anything outside the repositories. It
+// returns the text and a count of what it rewrote, for the log.
+func (p Paths) Generalize(text string) (string, int) {
+	n := 0
+	replace := func(old, with string) {
+		if old == "" || old == "/" {
+			return
+		}
+		n += strings.Count(text, old)
+		text = strings.ReplaceAll(text, old, with)
+	}
+	source := strings.TrimRight(p.Source, "/")
+	home := strings.TrimRight(p.Home, "/")
+	if source != "" {
+		replace(source+"/", "")
+		if home != "" && strings.HasPrefix(source, home+"/") {
+			replace("~/"+strings.TrimPrefix(source, home+"/")+"/", "")
+			replace("~/"+strings.TrimPrefix(source, home+"/"), "the source folder")
+		}
+		replace(source, "the source folder")
+	}
+	if home != "" {
+		replace(home+"/", "~/")
+		replace(home, LocalPath)
+	}
+	text = localPath.ReplaceAllStringFunc(text, func(m string) string {
+		i := strings.IndexAny(m, "~/")
+		path := m[i:]
+		end := strings.TrimRight(path, ".:!?") // a sentence's punctuation stays
+		n++
+		return m[:i] + LocalPath + path[len(end):]
+	})
+	return text, n
+}

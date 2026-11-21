@@ -41,6 +41,10 @@ type Persona struct {
 	Started []string
 	// Emoji and Asides are added to notes now and then.
 	Emoji, Asides []string
+	// References are where the answerer's references come from; one is
+	// picked at random for each answer, since a model left to choose keeps
+	// choosing the same.
+	References []string
 	// EmojiOdds and AsideOdds are N in "1 in N"; 0 is never.
 	EmojiOdds, AsideOdds int
 }
@@ -93,7 +97,9 @@ func parse(text string, base Persona) (Persona, map[string]bool) {
 	if found["voice"] {
 		p.Voice = strings.TrimSpace(strings.Join(sections["voice"], "\n"))
 	}
-	for key, dst := range map[string]*[]string{"started": &p.Started, "emoji": &p.Emoji, "asides": &p.Asides} {
+	for key, dst := range map[string]*[]string{
+		"started": &p.Started, "emoji": &p.Emoji, "asides": &p.Asides, "references": &p.References,
+	} {
 		if found[key] {
 			if items := list(sections[key]); len(items) > 0 {
 				*dst = items
@@ -147,6 +153,17 @@ func (p Persona) StartedNote() string {
 		return "On it."
 	}
 	return p.Started[rand.IntN(len(p.Started))] //nolint:gosec // a choice of words, not a secret
+}
+
+// VoiceForAnswer is the voice for one answer: Voice, and, when the persona
+// lists References, one of them picked at random to draw any reference in
+// this answer from.
+func (p Persona) VoiceForAnswer() string {
+	if len(p.References) == 0 || strings.TrimSpace(p.Voice) == "" {
+		return p.Voice
+	}
+	pick := p.References[rand.IntN(len(p.References))] //nolint:gosec // a choice of words, not a secret
+	return p.Voice + "\n\nIf you make a reference in this answer, draw it from: " + pick + "."
 }
 
 // Flavour adds, by the persona's odds, an emoji at the end of a note and an

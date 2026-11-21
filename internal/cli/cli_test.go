@@ -62,8 +62,8 @@ type harness struct {
 	origin string
 	// runner stands in for the answerer's Claude Code runs; now, when
 	// set, is the service's clock.
-	runner answerer.Runner
-	now    func() time.Time
+	runner, plainRunner answerer.Runner
+	now                 func() time.Time
 }
 
 func newHarness(t *testing.T) *harness {
@@ -122,7 +122,7 @@ func (h *harness) serve() {
 		IsTerminal: func() bool { return false },
 		SocketPath: h.socket, SettingsPath: h.settings, StatePath: h.state,
 		Secrets: h.tokens, APIURL: h.fake.APIURL(),
-		Runner: h.runner, Now: h.now,
+		Runner: h.runner, PlainRunner: h.plainRunner, Now: h.now,
 	}
 	go func() { done <- cli.Execute(ctx, env, []string{"serve", "--headless"}) }()
 	h.fake.WaitConnected(h.t)

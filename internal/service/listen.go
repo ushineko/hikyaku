@@ -243,7 +243,8 @@ func (s *Service) whenGone(d *departure) {
 		s.log.Warn("cannot say a listener stopped", "err", resp.Error)
 		return
 	}
-	notice := slackio.Neutralize(s.persona.Get().Flavour(noticeGone(d.name)))
+	notice := noticeGone(d.name)
+	notice += slackio.Neutralize(strings.TrimPrefix(s.persona.Get().Flavour(notice), notice))
 	if err := s.poster.Me(ctx, dm, notice); err != nil {
 		s.log.Warn("post /me", "err", s.redact.String(err.Error()))
 		if _, _, err := s.poster.Post(ctx, dm, slackio.Outgoing{Text: "_" + notice + "_"}); err != nil {
@@ -286,11 +287,19 @@ func (s *Service) namesLocked() []string {
 // listener, or a held one's queue (R2). `answerer:` goes to the answerer
 // (R10). With no listener, the answerer takes it or the bot says why not.
 func (s *Service) instruction(ctx context.Context, m slackio.Incoming) {
+	if s.adminCommand(ctx, m) {
+		return
+	}
 	if !slices.Contains(s.repliers, m.User) {
+		// A user with the DM grant is answered, never routed to an agent
+		// (spec 009, R2).
+		if s.mayDM(m.User) && s.offerQuestion(ctx, m.Channel, m.TS, m.User, m.Text) {
+			return
+		}
 		s.log.Warn("ignored an instruction from a user who is not allowed", "user", m.User)
 		return
 	}
-	if rest, ok := s.toAnswerer(m.Text); ok && m.User == s.settings.Owner {
+	if rest, ok := s.toAnswerer(m.Text); ok && s.isAdmin(m.User) {
 		if !s.offerQuestion(ctx, m.Channel, m.TS, m.User, rest) {
 			go s.answer(ctx, m, slackio.Outgoing{Text: answerAnswererOff})
 		}
@@ -461,10 +470,12 @@ func (s *Service) answer(ctx context.Context, m slackio.Incoming, msg slackio.Ou
 	s.post(ctx, m.Channel, msg)
 }
 
-// post posts one of the bot's notes, varied by the persona (spec 008, R4)
-// and unable to mention anyone, whatever the persona file holds (R6).
+// post posts one of the bot's notes, varied by the persona (spec 008, R4).
+// What the persona adds cannot mention anyone, whatever the file holds
+// (R6); the note's own words are the service's, links to channels included.
 func (s *Service) post(ctx context.Context, channel string, msg slackio.Outgoing) {
-	msg.Text = slackio.Neutralize(s.persona.Get().Flavour(msg.Text))
+	note := msg.Text
+	msg.Text = note + slackio.Neutralize(strings.TrimPrefix(s.persona.Get().Flavour(note), note))
 	if _, _, err := s.poster.Post(ctx, channel, msg); err != nil {
 		s.log.Warn("post a note", "err", s.redact.String(err.Error()))
 	}

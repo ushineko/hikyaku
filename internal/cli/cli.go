@@ -68,6 +68,9 @@ type Env struct {
 	Origin func(context.Context) string
 	// Runner overrides the answerer's runs (real Claude Code), for tests.
 	Runner answerer.Runner
+	// PlainRunner overrides the runs for people other than an admin, which
+	// read nothing (spec 009); with Runner set and this nil, Runner is used.
+	PlainRunner answerer.Runner
 	// Now overrides the service's clock, for tests.
 	Now func() time.Time
 }
@@ -118,7 +121,7 @@ func Root(env *Env) *cobra.Command {
 	root.SetIn(env.Stdin)
 	root.SetOut(env.Stdout)
 	root.SetErr(env.Stderr)
-	root.AddCommand(serveCmd(env), sendCmd(env), askCmd(env), inboxCmd(env), listenCmd(env), answererCmd(env), personaCmd(env), tokenCmd(env), statusCmd(env))
+	root.AddCommand(serveCmd(env), sendCmd(env), askCmd(env), inboxCmd(env), listenCmd(env), answererCmd(env), personaCmd(env), usersCmd(env), tokenCmd(env), statusCmd(env))
 	return root
 }
 

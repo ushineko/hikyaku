@@ -62,8 +62,14 @@ authorized on 2026-11-20 (as with ralphbox).
 - **Scope**: the answerer only. It starts a fresh, read-only Claude Code run
   for a question the owner types in their DM with the bot. Everything else
   in this project, including how it is developed, stays human-gated.
-- **Who**: the owner only. Extending it to anyone else needs a new decision
-  and its own controls.
+- **Who**: admins (the owner, by default) get the read-only answerer. Since
+  spec 009 (owner's decision, 2026-11-20), users listed at the desktop may
+  also start runs, in channels and, with a grant, in the DM; their runs have
+  no tools at all and read nothing. An admin's question gets the full
+  read-only answerer wherever the admin asks it, channels included, with no
+  review step (the owner's call, 2026-11-20). Widening
+  further (per-user source grants, spec 010) needs its own decision and
+  controls.
 - **Conditions**: off by default and switched only from the desktop; runs
   cannot write, push or reach the network beyond a fixed read-only
   allow-list (`dontAsk`, no prompts); no state carries between runs; caps
