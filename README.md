@@ -429,9 +429,12 @@ Go 1.26 or newer.
 
 ### Unreleased
 
+### 0.2.0
+
 - Admins have no daily cost cap; the day's cap (`answerer.day_budget_usd`)
   now applies to users' questions together, with $1 each. The per-run cap
   and time limit apply to everyone.
+
 - Charts: ask for a chart or a diagram and the answer comes with a PNG,
   drawn locally from Mermaid in a bubblewrap box with no network and no view
   of your home directory. Needs the new `files:write` scope (spec 011).
