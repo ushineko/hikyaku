@@ -30,6 +30,8 @@ type Post struct {
 	Text     string
 	ThreadTS string
 	Blocks   []map[string]any
+	// UnfurlLinks and UnfurlMedia are the flags as sent: "" when not sent.
+	UnfurlLinks, UnfurlMedia string
 }
 
 // Fake is the fake Slack.
@@ -123,7 +125,10 @@ func (f *Fake) postMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = r.ParseForm()
-	p := Post{Channel: r.Form.Get("channel"), Text: r.Form.Get("text"), ThreadTS: r.Form.Get("thread_ts")}
+	p := Post{
+		Channel: r.Form.Get("channel"), Text: r.Form.Get("text"), ThreadTS: r.Form.Get("thread_ts"),
+		UnfurlLinks: r.Form.Get("unfurl_links"), UnfurlMedia: r.Form.Get("unfurl_media"),
+	}
 	if b := r.Form.Get("blocks"); b != "" {
 		_ = json.Unmarshal([]byte(b), &p.Blocks)
 	}

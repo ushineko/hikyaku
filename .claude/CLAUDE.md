@@ -53,6 +53,27 @@ Load the following policy modules from `~/.claude/policies/`:
 validation: milestones-only
 ```
 
+### Exception: the standing answerer (unattended agent runs)
+
+Ralph rules out agents that run unattended. This project relaxes that rule
+for one mode, the answerer of spec 007, as an experiment the owner
+authorized on 2026-11-20 (as with ralphbox).
+
+- **Scope**: the answerer only. It starts a fresh, read-only Claude Code run
+  for a question the owner types in their DM with the bot. Everything else
+  in this project, including how it is developed, stays human-gated.
+- **Who**: the owner only. Extending it to anyone else needs a new decision
+  and its own controls.
+- **Conditions**: off by default and switched only from the desktop; runs
+  cannot write, push or reach the network beyond a fixed read-only
+  allow-list (`dontAsk`, no prompts); no state carries between runs; caps
+  on time, cost and concurrency; the threat model's S6 states the residual
+  risk. The injection test (spec 007 AC9) is rerun after a Claude Code
+  upgrade.
+- **Justification**: a personal, experimental side project; the risk is
+  bounded by capability, not by the model's judgement, and it is the
+  owner's own account at stake.
+
 ---
 
 ## Issue Tracking

@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
+	"github.com/ushineko/hikyaku/internal/answerer"
 	"github.com/ushineko/hikyaku/internal/ipc"
 	"github.com/ushineko/hikyaku/internal/paths"
 	"github.com/ushineko/hikyaku/internal/secret"
@@ -68,6 +70,23 @@ func serve(ctx context.Context, env *Env, debug bool) error {
 	if err != nil {
 		return fail(ExitError, "%v", err)
 	}
+	sc := slackio.New(slackio.Options{BotToken: vals[secret.Bot], AppToken: vals[secret.App], APIURL: env.APIURL, Log: log})
+	runner := env.Runner
+	if runner == nil {
+		c := answerer.Claude{Settings: s.Answerer, Env: answerer.CleanEnv(os.Environ(), redact)}
+		if home, err := os.UserHomeDir(); err == nil {
+			c.ReadDir = filepath.Join(home, "git")
+		}
+		runner = c
+	}
+	svc, err := service.New(service.Deps{
+		Poster: sc, Listener: sc, Store: st, Settings: s, Log: log, Redact: redact, Now: env.Now,
+		Runner: runner, AnswererState: filepath.Join(filepath.Dir(env.StatePath), "answerer.json"),
+	})
+	if err != nil {
+		return fail(ExitError, "%v", err)
+	}
+
 	srv, err := ipc.Listen(env.SocketPath, log)
 	if err != nil {
 		var running *ipc.RunningError
@@ -76,9 +95,6 @@ func serve(ctx context.Context, env *Env, debug bool) error {
 		}
 		return fail(ExitError, "%v", err)
 	}
-
-	sc := slackio.New(slackio.Options{BotToken: vals[secret.Bot], AppToken: vals[secret.App], APIURL: env.APIURL, Log: log})
-	svc := service.New(service.Deps{Poster: sc, Listener: sc, Store: st, Settings: s, Log: log, Redact: redact})
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

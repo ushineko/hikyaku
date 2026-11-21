@@ -27,6 +27,7 @@ set up by hand.
 - [Running the service](#running-the-service)
 - [Sending and asking](#sending-and-asking)
 - [Listening for instructions](#listening-for-instructions)
+- [The answerer](#the-answerer)
 - [Settings](#settings)
 - [Scopes](#scopes)
 - [Security](#security)
@@ -64,8 +65,13 @@ Spec 002 replaces these steps with `hikyaku setup`.
 
 ## Running the service
 
+Download the tarball for Linux amd64 from the repository's Releases and
+check it, or build from source:
+
 ```bash
-make build
+gh attestation verify hikyaku-0.1.0-linux-amd64.tar.gz -R ushineko/hikyaku
+sha256sum -c SHA256SUMS
+# or: make build
 ./hikyaku serve --headless
 ```
 
@@ -161,8 +167,62 @@ to use. A message nobody is listening for is not kept: the bot answers that
 no agent is listening. `hikyaku status` lists who is listening.
 
 Only allowed users' DMs are instructions. Messages in channels never are,
-and nothing listens unless an agent runs `listen`; hikyaku does not start
-agents.
+and nothing listens unless an agent runs `listen`. hikyaku starts an agent
+only in one mode, the answerer, which you switch on yourself.
+
+## The answerer
+
+When no agent session is running, the answerer can answer your questions
+itself:
+
+```bash
+hikyaku answerer on       # off by default
+hikyaku answerer status
+hikyaku answerer off      # stops a running answer at once
+```
+
+With it on, a top-level message **you** write in the DM with the bot, which
+no listening agent takes, starts a fresh Claude Code run (`claude -p`). It
+answers in your message's thread, and a reply in that thread is a
+follow-up. A short note ("On it.", "Looking into it." and the like) means
+a run has started. A second question
+waits its turn, up to three, and is answered "Queued".
+
+Each run can only read. It is started with `--permission-mode dontAsk`,
+only the `Bash`, `Read`, `Grep` and `Glob` tools, no skills, none of your
+Claude Code settings, no MCP servers but the one in `answerer.mcp_config`
+(started with `READ_ONLY_MODE=true`), and an allow-list of read-only uses
+of those tools:
+
+- `glab` and `gh`: listing and viewing MRs/PRs, CI, releases and issues;
+- Jira's read tools, through the Atlassian MCP server, when
+  `answerer.mcp_config` names a configuration for it;
+- `git log`, `git show` and `git status`, and reading files under `~/git`.
+
+Anything else it tries is denied without a prompt. Files that hold
+credentials (`.env*`, `*.key`, `*.pem`, SSH keys, `.netrc`,
+`credentials*`, `.git/config` and similar) cannot be read or searched even
+under `~/git`. Before an answer is posted, anything shaped like a
+credential is replaced with `[redacted]`, and the answer says so; email
+addresses and phone numbers become `[email]` and `[phone]`. It has no web or network
+tool, and nothing carries from one run to the next. Its answer goes only to
+your DM, without link previews, and cannot mention anyone. Each answer says
+it is automated and may be wrong.
+
+Only the owner can start a run. `allowed_repliers` can answer agents but
+not start runs. Slack cannot switch the answerer on.
+
+Limits: one run at a time, five minutes and $0.50 a run, $5 a day (local
+midnight). The runs use your Claude Code login. The service logs each run's
+duration, cost and denied tool calls, and not the question or the answer.
+A run cut off by its time limit or by `off` reports no cost, so it is
+counted at its whole $0.50.
+Follow-ups need the service to have stayed up: after a restart, a reply in
+an old answer's thread is kept like any reply but not answered.
+
+This mode is an experiment and an exception to the project's rule against
+unattended agents; [`docs/threat-model.md`](docs/threat-model.md), S6, says
+what it defends and what it does not.
 
 ## Settings
 
@@ -174,6 +234,13 @@ agents.
 | `allowed_repliers` | Member IDs whose thread replies reach an agent | the owner alone |
 | `token_store` | `keyring` or `file` | `keyring` |
 | `retention` | How long a message and its replies are remembered | `168h` |
+| `answerer.allowed_tools` | Replaces the answerer's read-only allow-list | see [The answerer](#the-answerer) |
+| `answerer.mcp_config` | MCP configuration file for the answerer's runs | none |
+| `answerer.run_budget_usd` | Cost cap of one run | `0.50` |
+| `answerer.day_budget_usd` | Cost cap of a day | `5.00` |
+| `answerer.run_timeout` | Time limit of one run | `5m` |
+| `answerer.model` | Model for the runs | Claude Code's default |
+| `answerer.claude` | The Claude Code command | `claude` |
 
 Messages and replies are kept in `~/.local/state/hikyaku/messages.json`
 (`$XDG_STATE_HOME`), so `inbox` works after a restart. The socket is
@@ -204,6 +271,12 @@ connection.
 - Only `allowed_repliers` (or the owner) can reply to an agent. A reply from
   anyone else is dropped and logged by user ID; its text is not kept.
 - An agent can post whatever is in its context. Do not have it send secrets.
+- The answerer, when on, starts read-only Claude Code runs for the owner's
+  questions, with the owner's credentials for the sources it reads. Someone
+  who takes over the owner's Slack account can read, through it, what those
+  tools can reach. Switch it off when that matters. Secret files are
+  denied to it and its answers are scrubbed of credential shapes, emails
+  and phone numbers; a credential with no recognizable shape is not caught.
 
 [`docs/threat-model.md`](docs/threat-model.md) is the full account. Report a
 vulnerability through the repository's Security tab.
@@ -223,6 +296,10 @@ Go 1.26 or newer.
 
 ### Unreleased
 
+### 0.1.0
+
+The first release.
+
 - The service, `hikyaku serve --headless`: Socket Mode connection to Slack,
   a private Unix socket for the CLI, and a message store that survives a
   restart (spec 001).
@@ -234,3 +311,7 @@ Go 1.26 or newer.
 - `--thread <handle>` keeps a conversation in one thread (spec 001).
 - `hikyaku listen`: a running agent waits for an instruction typed in the
   DM with the bot, addressed by name when several listen (spec 005).
+- `hikyaku answerer on|off|status`: when on, a fresh read-only Claude Code
+  run answers the owner's DMs that no agent is listening for, never reads
+  secret files, and posts answers scrubbed of credentials, emails and
+  phone numbers (spec 007).
