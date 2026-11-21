@@ -65,8 +65,13 @@ Spec 002 replaces these steps with `hikyaku setup`.
 
 ## Running the service
 
+Download the tarball for Linux amd64 from the repository's Releases and
+check it, or build from source:
+
 ```bash
-make build
+gh attestation verify hikyaku-0.1.0-linux-amd64.tar.gz -R ushineko/hikyaku
+sha256sum -c SHA256SUMS
+# or: make build
 ./hikyaku serve --headless
 ```
 
@@ -290,6 +295,10 @@ Go 1.26 or newer.
 ## Changelog
 
 ### Unreleased
+
+### 0.1.0
+
+The first release.
 
 - The service, `hikyaku serve --headless`: Socket Mode connection to Slack,
   a private Unix socket for the CLI, and a message store that survives a

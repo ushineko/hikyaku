@@ -98,6 +98,21 @@ LDFLAGS=-X github.com/ushineko/hikyaku/internal/buildinfo.version=$(BUILD_VERSIO
 build: ## Build hikyaku for the host platform
 	CGO_ENABLED=0 go build -trimpath -ldflags='$(LDFLAGS)' -o hikyaku ./cmd/hikyaku
 
+# The release tarball: the one static binary, the README, the licence and
+# the Slack app manifest. Linux amd64 only for now: the service is tested
+# there, and the keyring and socket paths have not been tried elsewhere.
+.PHONY: release
+release: build ## Package the binary into dist/ as a tar.gz with SHA256SUMS
+	@set -e; \
+	rm -rf dist; mkdir -p dist; \
+	base="hikyaku-$(VERSION)-linux-amd64"; stage="dist/$$base"; \
+	mkdir -p "$$stage"; \
+	cp hikyaku README.md LICENSE docs/slack-app-manifest.yaml "$$stage/"; \
+	tar -C dist -czf "dist/$$base.tar.gz" "$$base"; \
+	rm -rf "$$stage"; \
+	cd dist && sha256sum *.tar.gz > SHA256SUMS
+	@ls -l dist/*.tar.gz dist/SHA256SUMS
+
 .PHONY: vuln
 vuln: ## Scan for known vulnerabilities
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
