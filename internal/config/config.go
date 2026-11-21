@@ -36,6 +36,9 @@ type Settings struct {
 	// Owner is the Slack user ID whose DM with the bot is the default
 	// destination. Spec 002's pairing writes it; until then it is set by hand.
 	Owner string `yaml:"owner,omitempty"`
+	// Admins are the Slack user IDs who may put the bot in channels and
+	// get sourced answers (spec 009). Empty means the owner.
+	Admins []string `yaml:"admins,omitempty"`
 	// AllowedRepliers are the Slack user IDs whose replies reach an agent.
 	// Empty means the owner alone.
 	AllowedRepliers []string `yaml:"allowed_repliers,omitempty"`
@@ -89,11 +92,14 @@ func DefaultAllowedTools() []string {
 		"Bash(git log:*)", "Bash(git show:*)", "Bash(git status:*)",
 		// Listing only: git refuses -d, -a and -f alongside --list.
 		"Bash(git tag --list:*)", "Bash(git tag -l:*)", "Bash(git describe:*)",
+		// A repository's address, for links (spec 009): get-url takes one
+		// name and nothing else, and `git remote -v` is matched exactly.
+		"Bash(git remote get-url:*)", "Bash(git remote -v)", "Bash(git branch --show-current)",
 	}
 	for _, c := range []string{
-		"glab mr list", "glab mr view", "glab ci status", "glab ci list", "glab ci get",
+		"glab mr list", "glab mr view", "glab ci status", "glab ci list", "glab ci get", "glab repo view",
 		"glab release list", "glab release view", "glab issue list", "glab issue view",
-		"gh pr list", "gh pr view", "gh pr status", "gh pr checks", "gh run list", "gh run view",
+		"gh pr list", "gh pr view", "gh pr status", "gh pr checks", "gh run list", "gh run view", "gh repo view",
 		"gh release list", "gh release view", "gh issue list", "gh issue view",
 	} {
 		tools = append(tools, "Bash("+c+":*)")
@@ -200,6 +206,17 @@ func (s Settings) RetentionPeriod() time.Duration {
 		return d
 	}
 	return DefaultRetention
+}
+
+// AdminIDs are the admins: Admins, or the owner when the list is empty.
+func (s Settings) AdminIDs() []string {
+	if len(s.Admins) > 0 {
+		return slices.Clone(s.Admins)
+	}
+	if s.Owner == "" {
+		return nil
+	}
+	return []string{s.Owner}
 }
 
 // Repliers is the allow-list in effect: AllowedRepliers, or the owner when

@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- hikyaku's icon: a hitodama, the soul-flame of Japanese folklore, carrying a sealed letter. -->
+  <defs>
+    <radialGradient id="night" cx="50%" cy="42%" r="70%">
+      <stop offset="0" stop-color="#2b2f5e"/>
+      <stop offset="1" stop-color="#14162e"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="55%" r="50%">
+      <stop offset="0" stop-color="#7fe3ff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#7fe3ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="flame" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#e9fbff"/>
+      <stop offset="0.45" stop-color="#8be6ff"/>
+      <stop offset="1" stop-color="#4f7dff"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#c9f4ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#night)"/>
+  <circle cx="512" cy="560" r="400" fill="url(#glow)"/>
+
+  <!-- the soul-flame: a round body with a tail curling up and to the left -->
+  <path fill="url(#flame)" d="
+    M 512 820
+    C 360 820 270 715 270 590
+    C 270 470 350 395 430 340
+    C 470 312 470 255 440 195
+    C 540 230 600 300 610 380
+    C 690 420 754 500 754 595
+    C 754 718 660 820 512 820 Z"/>
+  <path fill="url(#core)" opacity="0.9" d="
+    M 512 770
+    C 410 770 345 700 345 610
+    C 345 530 400 480 460 445
+    C 490 428 500 395 492 360
+    C 545 390 570 430 575 470
+    C 640 500 680 550 680 612
+    C 680 700 610 770 512 770 Z"/>
+
+  <!-- the letter, folded, with a red seal -->
+  <g transform="rotate(-8 512 615)">
+    <rect x="392" y="545" width="240" height="150" rx="14" fill="#fdf6e3" stroke="#2b2f5e" stroke-width="10"/>
+    <path d="M 397 552 L 512 632 L 627 552" fill="none" stroke="#2b2f5e" stroke-width="10" stroke-linejoin="round"/>
+    <circle cx="512" cy="632" r="26" fill="#d6453d"/>
+  </g>
+
+  <!-- two small sparks -->
+  <circle cx="300" cy="300" r="12" fill="#c9f4ff" opacity="0.8"/>
+  <circle cx="760" cy="270" r="8" fill="#c9f4ff" opacity="0.7"/>
+  <circle cx="700" cy="180" r="5" fill="#c9f4ff" opacity="0.6"/>
+</svg>

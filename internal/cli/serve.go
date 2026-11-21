@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ushineko/hikyaku/internal/access"
 	"github.com/ushineko/hikyaku/internal/answerer"
 	"github.com/ushineko/hikyaku/internal/ipc"
 	"github.com/ushineko/hikyaku/internal/paths"
@@ -73,17 +74,24 @@ func serve(ctx context.Context, env *Env, debug bool) error {
 	}
 	sc := slackio.New(slackio.Options{BotToken: vals[secret.Bot], AppToken: vals[secret.App], APIURL: env.APIURL, Log: log})
 	runner := env.Runner
+	plainRunner := env.PlainRunner
 	if runner == nil {
 		c := answerer.Claude{Settings: s.Answerer, Env: answerer.CleanEnv(os.Environ(), redact)}
 		if home, err := os.UserHomeDir(); err == nil {
 			c.ReadDir = filepath.Join(home, "git")
 		}
 		runner = c
+		plainRunner = answerer.Claude{Settings: s.Answerer, Env: c.Env, NoSource: true}
+	}
+	users, err := access.Open(filepath.Join(filepath.Dir(env.StatePath), "access.json"))
+	if err != nil {
+		return fail(ExitError, "%v", err)
 	}
 	svc, err := service.New(service.Deps{
 		Poster: sc, Listener: sc, Store: st, Settings: s, Log: log, Redact: redact, Now: env.Now,
 		Runner: runner, AnswererState: filepath.Join(filepath.Dir(env.StatePath), "answerer.json"),
-		Persona: &persona.Loader{Path: env.personaPath(s), Log: log},
+		Persona:     &persona.Loader{Path: env.personaPath(s), Log: log},
+		PlainRunner: plainRunner, Access: users, Paths: answerPaths(),
 	})
 	if err != nil {
 		return fail(ExitError, "%v", err)
@@ -114,4 +122,14 @@ func serve(ctx context.Context, env *Env, debug bool) error {
 		return fail(ExitError, "%s", redact.String(serveErr.Error()))
 	}
 	return nil
+}
+
+// answerPaths are the folders answers are kept from naming: the home
+// directory and the source folder the runs read, ~/git.
+func answerPaths() answerer.Paths {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return answerer.Paths{}
+	}
+	return answerer.Paths{Home: home, Source: filepath.Join(home, "git")}
 }

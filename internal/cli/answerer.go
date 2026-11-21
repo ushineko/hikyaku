@@ -40,7 +40,7 @@ func answererCmd(env *Env) *cobra.Command {
 // answererLine is the answerer's state on one line.
 func answererLine(a ipc.AnswererStatus) string {
 	if !a.On {
-		return fmt.Sprintf("answerer: off; $%.2f of $%.2f spent today", a.Spent, a.Cap)
+		return "answerer: off" + spentLine(a)
 	}
 	parts := []string{"answerer: on"}
 	if a.Running {
@@ -49,5 +49,13 @@ func answererLine(a ipc.AnswererStatus) string {
 	if a.Queued > 0 {
 		parts = append(parts, fmt.Sprintf("%d queued", a.Queued))
 	}
-	return strings.Join(parts, ", ") + fmt.Sprintf("; $%.2f of $%.2f spent today", a.Spent, a.Cap)
+	return strings.Join(parts, ", ") + spentLine(a)
+}
+
+func spentLine(a ipc.AnswererStatus) string {
+	s := fmt.Sprintf("; $%.2f of $%.2f spent today", a.Spent, a.Cap)
+	if a.UsersSpent > 0 {
+		s += fmt.Sprintf(" ($%.2f by users)", a.UsersSpent)
+	}
+	return s
 }

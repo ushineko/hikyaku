@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ushineko/hikyaku/internal/access"
 	"github.com/ushineko/hikyaku/internal/answerer"
 	"github.com/ushineko/hikyaku/internal/buildinfo"
 	"github.com/ushineko/hikyaku/internal/config"
@@ -64,6 +65,12 @@ type Service struct {
 	desk *desk
 	// persona is the bot's persona (spec 008).
 	persona *persona.Loader
+	// admins and access are the roles (spec 009); self is the bot's own
+	// user ID, learnt when Run starts.
+	admins []string
+	access *access.List
+	self   string
+	paths  answerer.Paths
 }
 
 // Deps is what a Service is built from.
@@ -82,6 +89,13 @@ type Deps struct {
 	AnswererState string
 	// Persona reads the persona file; nil is the built-in default.
 	Persona *persona.Loader
+	// PlainRunner runs questions from people other than an admin, with no
+	// tools (spec 009); nil uses Runner.
+	PlainRunner answerer.Runner
+	// Access is the users list (spec 009); nil means no users.
+	Access *access.List
+	// Paths are the folders whose absolute paths answers must not show.
+	Paths answerer.Paths
 }
 
 // New builds a Service.
@@ -101,9 +115,10 @@ func New(d Deps) (*Service, error) {
 		waiters: map[string][]chan store.Reply{}, listeners: map[string]*listener{},
 		instrs: map[string]*instr{}, owners: map[string]string{}, convo: map[string]string{},
 		bg: context.Background(), persona: d.Persona,
+		admins: d.Settings.AdminIDs(), access: d.Access, paths: d.Paths,
 	}
 	if d.Runner != nil {
-		desk, err := newDesk(d.Runner, d.Settings.Answerer, d.AnswererState)
+		desk, err := newDesk(d.Runner, d.PlainRunner, d.Settings.Answerer, d.AnswererState)
 		if err != nil {
 			return nil, err
 		}
@@ -118,8 +133,13 @@ func (s *Service) Run(ctx context.Context) error {
 	if len(s.repliers) == 0 {
 		s.log.Warn("no owner and no allowed_repliers in the settings: no reply will reach an agent")
 	}
+	self, err := s.poster.Self(ctx)
+	if err != nil {
+		s.log.Warn("learn the bot's own user ID; mentions in channels will not be heard",
+			"err", s.redact.String(err.Error()))
+	}
 	s.mu.Lock()
-	s.bg = ctx
+	s.bg, s.self = ctx, self
 	s.mu.Unlock()
 	in := make(chan slackio.Incoming, 16)
 	errc := make(chan error, 1)
@@ -133,6 +153,10 @@ func (s *Service) Run(ctx context.Context) error {
 			return err
 		case m := <-in:
 			switch {
+			case m.Joined:
+				s.joined(ctx, m)
+			case !m.InDM() && (s.mentionsMe(m.Text) || s.askerInOwnThread(m)):
+				s.channelMessage(ctx, m)
 			case m.ThreadTS != "":
 				s.reply(ctx, m)
 			case m.InDM():
@@ -151,11 +175,17 @@ func (s *Service) reply(ctx context.Context, m slackio.Incoming) {
 		return
 	}
 	if !slices.Contains(s.repliers, m.User) {
+		// A user with the DM grant, who may not answer agents, can still
+		// follow up on an answer in their DM (spec 009, R2).
+		if m.InDM() && s.mayDM(m.User) {
+			s.offerFollowUp(ctx, m.Channel, m.ThreadTS, m.User, m.Text)
+			return
+		}
 		s.log.Warn("ignored a reply from a user who is not allowed", "user", m.User, "handle", handle)
 		return
 	}
 	r := store.Reply{User: m.User, Text: m.Text, TS: m.TS, At: s.now().UTC()}
-	if !s.deliverReply(handle, r) {
+	if !s.deliverReply(handle, r) && m.InDM() {
 		s.offerFollowUp(ctx, m.Channel, m.ThreadTS, m.User, m.Text)
 	}
 }
@@ -206,6 +236,8 @@ func (s *Service) Handle(ctx context.Context, req ipc.Request) ipc.Response {
 		}}
 	case ipc.OpAnswerer:
 		return s.answerSwitch(ctx, req)
+	case ipc.OpUsers:
+		return s.usersOp(req)
 	default:
 		return ipc.Fail(ipc.CodeBadRequest, "unknown operation "+req.Op)
 	}

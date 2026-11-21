@@ -134,3 +134,22 @@ func TestInitWritesTheDefaultOnce(t *testing.T) {
 	assert.Equal(t, persona.Default(), persona.Parse(string(b)))
 	assert.ErrorContains(t, persona.Init(path), "exists")
 }
+
+// Spec 008, amended in 009: each answer's voice names one reference source
+// picked at random, so the model does not keep reaching for the same one;
+// without a list, or without a voice, nothing is added.
+func TestEachAnswerDrawsItsReferencesFromOneSource(t *testing.T) {
+	p := persona.Parse("## Voice\n\nDry.\n\n## References\n\n- Monty Python\n- The Simpsons\n- Edo-period trivia\n")
+	assert.Equal(t, []string{"Monty Python", "The Simpsons", "Edo-period trivia"}, p.References)
+	seen := map[string]bool{}
+	for range 200 {
+		v := p.VoiceForAnswer()
+		rest, ok := strings.CutPrefix(v, "Dry.\n\nIf you make a reference in this answer, draw it from: ")
+		require.True(t, ok, v)
+		seen[strings.TrimSuffix(rest, ".")] = true
+	}
+	assert.Len(t, seen, 3, "every source comes up")
+
+	assert.Equal(t, "Dry.", persona.Parse("## Voice\n\nDry.\n").VoiceForAnswer())
+	assert.Empty(t, persona.Parse("## Voice\n\n\n## References\n\n- x\n").VoiceForAnswer())
+}

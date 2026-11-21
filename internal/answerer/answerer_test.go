@@ -213,3 +213,45 @@ func TestAPromptFencesTheOwnersText(t *testing.T) {
 		"the hostile end marker stays inside the fence")
 	assert.Len(t, nonces, 3, "every fence has its own nonce")
 }
+
+// AC3 (spec 009): a run for someone who is not an admin has no tools at
+// all, no allow-list, no MCP server and no directory to read; everything
+// else of the security contract stays.
+func TestAPlainRunCanReadNothing(t *testing.T) {
+	rec := t.TempDir()
+	c := answerer.Claude{
+		Settings: config.Answerer{
+			Claude:       fakeClaude(t, rec, `echo '{"type":"result","subtype":"success","is_error":false,"result":"hi","total_cost_usd":0.01}'`),
+			MCPConfig:    "/invented/mcp.json",
+			AllowedTools: []string{"Read(~/git/**)"},
+		},
+		ReadDir: "/home/invented/git", NoSource: true,
+	}
+	res, err := c.Run(context.Background(), "the prompt")
+	require.NoError(t, err)
+	assert.Equal(t, "hi", res.Text)
+
+	args := strings.Split(strings.TrimRight(read(t, rec+"/args"), "\n"), "\n")
+	assert.Equal(t, "", flag(t, args, "--tools"), "no tools at all")
+	for _, absent := range []string{"--allowedTools", "--disallowedTools", "--mcp-config", "--add-dir"} {
+		assert.NotContains(t, args, absent)
+	}
+	assert.Equal(t, "dontAsk", flag(t, args, "--permission-mode"))
+	assert.Equal(t, "none", flag(t, args, "--permission-prompts"))
+	assert.Equal(t, "", flag(t, args, "--setting-sources"))
+	assert.Equal(t, "0.50", flag(t, args, "--max-budget-usd"))
+	assert.Contains(t, args, "--strict-mcp-config")
+	assert.Contains(t, args, "--no-session-persistence")
+	assert.Contains(t, args, "--disable-slash-commands")
+	assert.Contains(t, read(t, rec+"/env"), "READ_ONLY_MODE=true")
+}
+
+// AC3 (spec 009): a plain prompt says it can see nothing and that the
+// asker is not the owner.
+func TestAPlainPromptSaysWhoIsAsking(t *testing.T) {
+	p, err := answerer.PlainPrompt("what's in the repo?", nil, "")
+	require.NoError(t, err)
+	assert.Contains(t, p, "You have no tools and no access to any system")
+	assert.Contains(t, p, "(typed in Slack by someone who is not the owner)")
+	assert.NotContains(t, p, "typed in Slack by the owner")
+}

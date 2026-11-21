@@ -77,3 +77,32 @@ func TestAnAnswerWithoutSecretsIsUnchanged(t *testing.T) {
 		assert.Zero(t, n)
 	}
 }
+
+// Spec 009: an answer shows no path from the owner's machine. A path under
+// the source folder is relative to it; any other path on the machine is
+// generalized; URLs, API routes and prose are left alone.
+func TestAnAnswerShowsNoPathsFromTheMachine(t *testing.T) {
+	p := answerer.Paths{Home: "/home/invented", Source: "/home/invented/git"}
+	got, n := p.Generalize("See /home/invented/git/hikyaku/internal/cli/cli.go:42 and ~/git/ototo/main.go. " +
+		"Config is in /home/invented/.config/hikyaku/settings.yaml (or `~/.ssh/config`). " +
+		"All repos live in /home/invented/git. I worked in /tmp/hikyaku-answer-123abc. Home is /home/invented. " +
+		"Git is /usr/bin/git; hosts are in /etc/hosts.")
+	assert.Equal(t, "See hikyaku/internal/cli/cli.go:42 and ototo/main.go. "+
+		"Config is in [a local path] (or `[a local path]`). "+
+		"All repos live in the source folder. I worked in [a local path]. Home is [a local path]. "+
+		"Git is [a local path]; hosts are in [a local path].", got)
+	assert.Positive(t, n)
+	assert.NotContains(t, got, "invented")
+
+	for _, keep := range []string{
+		"hikyaku/internal/cli/cli.go",
+		"<https://gitlab.invented/team/agent/-/releases/v4.2|release> and https://example.com/home/x",
+		"call GET /api/v4/projects/42/merge_requests",
+		"it takes ~5 minutes, roughly ~2x faster",
+		"the /etc folder and the /home directory",
+	} {
+		same, n := p.Generalize(keep)
+		assert.Equal(t, keep, same)
+		assert.Zero(t, n, keep)
+	}
+}

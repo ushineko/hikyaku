@@ -83,6 +83,10 @@ type Incoming struct {
 	TS          string
 	User        string
 	Text        string
+	// Joined marks the event that User was added to Channel, by Inviter
+	// (empty when they joined themselves); it carries no text.
+	Joined  bool
+	Inviter string
 }
 
 // InDM reports whether the message was written in a DM with the bot.
@@ -99,7 +103,25 @@ type Poster interface {
 	Unreact(ctx context.Context, channel, ts, emoji string) error
 	// Me posts text as a /me message, top-level in channel.
 	Me(ctx context.Context, channel, text string) error
+	// Join joins a public channel; Leave leaves a channel. Self is the
+	// bot's own user ID.
+	Join(ctx context.Context, channel string) error
+	Leave(ctx context.Context, channel string) error
+	Self(ctx context.Context) (string, error)
+	// Thread is the messages of the thread rooted at ts, oldest first, at
+	// most the last 50.
+	Thread(ctx context.Context, channel, ts string) ([]ThreadMessage, error)
 }
+
+// ThreadMessage is one message of a thread; Bot marks one a bot posted.
+type ThreadMessage struct {
+	User, Text, TS string
+	Bot            bool
+}
+
+// ErrNotPublic is wrapped by Join for a channel the bot cannot join by
+// itself: a private one, which has to invite it.
+var ErrNotPublic = errors.New("not a public channel")
 
 // ErrMissingScope is wrapped by an error from a call the app's token has no
 // scope for, such as React before the app is reinstalled with
@@ -195,6 +217,60 @@ func reactionErr(what string, err error, harmless string) error {
 		return fmt.Errorf("%s: %w", what, ErrMissingScope)
 	}
 	return fmt.Errorf("%s: %w", what, err)
+}
+
+// Join joins a public channel.
+func (c *Client) Join(ctx context.Context, channel string) error {
+	_, _, _, err := c.api.JoinConversationContext(ctx, channel)
+	return channelErr("join "+channel, err)
+}
+
+// Leave leaves a channel; one the bot is not in is not an error.
+func (c *Client) Leave(ctx context.Context, channel string) error {
+	_, err := c.api.LeaveConversationContext(ctx, channel)
+	if err != nil && strings.Contains(err.Error(), "not_in_channel") {
+		return nil
+	}
+	return channelErr("leave "+channel, err)
+}
+
+func channelErr(what string, err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case strings.Contains(err.Error(), "missing_scope"):
+		return fmt.Errorf("%s: %w", what, ErrMissingScope)
+	case strings.Contains(err.Error(), "method_not_supported_for_channel_type"),
+		strings.Contains(err.Error(), "channel_not_found"):
+		return fmt.Errorf("%s: %w", what, ErrNotPublic)
+	}
+	return fmt.Errorf("%s: %w", what, err)
+}
+
+// Thread reads a thread (conversations.replies, under the history scopes).
+func (c *Client) Thread(ctx context.Context, channel, ts string) ([]ThreadMessage, error) {
+	msgs, _, _, err := c.api.GetConversationRepliesContext(ctx,
+		&slack.GetConversationRepliesParameters{ChannelID: channel, Timestamp: ts, Limit: 50})
+	if err != nil {
+		return nil, channelErr("read a thread", err)
+	}
+	out := make([]ThreadMessage, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, ThreadMessage{User: m.User, Text: m.Text, TS: m.Timestamp, Bot: m.BotID != ""})
+	}
+	if len(out) > 50 {
+		out = out[len(out)-50:]
+	}
+	return out, nil
+}
+
+// Self is the bot's own user ID, from auth.test, which needs no scope.
+func (c *Client) Self(ctx context.Context) (string, error) {
+	r, err := c.api.AuthTestContext(ctx)
+	if err != nil {
+		return "", fmt.Errorf("auth.test: %w", err)
+	}
+	return r.UserID, nil
 }
 
 // Me posts a /me message.
@@ -401,6 +477,14 @@ func (c *Client) event(ctx context.Context, sm *socketmode.Client, evt socketmod
 			return
 		}
 		logEvent(c.log, api)
+		if j, ok := api.InnerEvent.Data.(*slackevents.MemberJoinedChannelEvent); ok {
+			in := Incoming{Channel: j.Channel, ChannelType: j.ChannelType, User: j.User, Joined: true, Inviter: j.Inviter}
+			select {
+			case replies <- in:
+			case <-ctx.Done():
+			}
+			return
+		}
 		if in, ok := personMessage(api); ok {
 			select {
 			case replies <- in:

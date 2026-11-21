@@ -25,6 +25,9 @@ import (
 // DMChannel is the ID conversations.open returns.
 const DMChannel = "D00000001"
 
+// BotUser is the bot's own user ID, as auth.test reports it.
+const BotUser = "U0000000B"
+
 // Post is one chat.postMessage call as the fake received it.
 type Post struct {
 	Channel  string
@@ -68,7 +71,15 @@ type Fake struct {
 	// noReactions makes the reactions methods answer missing_scope.
 	noReactions bool
 	// mes is the text of every chat.meMessage, in order.
-	mes       []Post
+	mes []Post
+	// joins and leaves are the channels conversations.join and
+	// conversations.leave were called for; private are channels join
+	// refuses, as Slack does for a private one.
+	joins, leaves []string
+	private       map[string]bool
+	// threads are the messages of each thread, root first, as
+	// conversations.replies answers them.
+	threads   map[string][]map[string]any
 	connected chan struct{}
 }
 
@@ -83,6 +94,10 @@ func New(t *testing.T, botToken, appToken string) *Fake {
 	mux.HandleFunc("/api/reactions.add", f.reaction(false))
 	mux.HandleFunc("/api/reactions.remove", f.reaction(true))
 	mux.HandleFunc("/api/chat.meMessage", f.meMessage)
+	mux.HandleFunc("/api/auth.test", f.authTest)
+	mux.HandleFunc("/api/conversations.join", f.conversation(true))
+	mux.HandleFunc("/api/conversations.leave", f.conversation(false))
+	mux.HandleFunc("/api/conversations.replies", f.replies)
 	mux.HandleFunc("/ws", f.websocket)
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.Close)
@@ -159,6 +174,7 @@ func (f *Fake) postMessage(w http.ResponseWriter, r *http.Request) {
 	f.seq++
 	ts := fmt.Sprintf("1700000000.%06d", f.seq)
 	f.posts = append(f.posts, p)
+	f.remember(p.Channel, ts, p.ThreadTS, map[string]any{"ts": ts, "text": p.Text, "bot_id": "B00000001", "user": BotUser})
 	f.lastTS = ts
 	f.mu.Unlock()
 	reply(w, map[string]any{"ok": true, "channel": p.Channel, "ts": ts})
@@ -181,6 +197,63 @@ func (f *Fake) reaction(removed bool) http.HandlerFunc {
 			Channel: r.Form.Get("channel"), TS: r.Form.Get("timestamp"), Name: r.Form.Get("name"), Removed: removed,
 		})
 		reply(w, map[string]any{"ok": true})
+	}
+}
+
+func (f *Fake) replies(w http.ResponseWriter, r *http.Request) {
+	if bearer(r) != f.botToken {
+		reply(w, map[string]any{"ok": false, "error": "invalid_auth"})
+		return
+	}
+	_ = r.ParseForm()
+	f.mu.Lock()
+	msgs := append([]map[string]any(nil), f.threads[r.Form.Get("channel")+"/"+r.Form.Get("ts")]...)
+	f.mu.Unlock()
+	reply(w, map[string]any{"ok": true, "messages": msgs, "has_more": false})
+}
+
+// remember files a message under its thread, for conversations.replies.
+// f.mu is held.
+func (f *Fake) remember(channel, ts, threadTS string, m map[string]any) {
+	if f.threads == nil {
+		f.threads = map[string][]map[string]any{}
+	}
+	root := threadTS
+	if root == "" {
+		root = ts
+	}
+	key := channel + "/" + root
+	f.threads[key] = append(f.threads[key], m)
+}
+
+func (f *Fake) authTest(w http.ResponseWriter, r *http.Request) {
+	if bearer(r) != f.botToken {
+		reply(w, map[string]any{"ok": false, "error": "invalid_auth"})
+		return
+	}
+	reply(w, map[string]any{"ok": true, "user_id": BotUser, "user": "hikyaku", "team_id": "T00000000"})
+}
+
+func (f *Fake) conversation(join bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if bearer(r) != f.botToken {
+			reply(w, map[string]any{"ok": false, "error": "invalid_auth"})
+			return
+		}
+		_ = r.ParseForm()
+		ch := r.Form.Get("channel")
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		switch {
+		case join && f.private[ch]:
+			reply(w, map[string]any{"ok": false, "error": "method_not_supported_for_channel_type"})
+			return
+		case join:
+			f.joins = append(f.joins, ch)
+		default:
+			f.leaves = append(f.leaves, ch)
+		}
+		reply(w, map[string]any{"ok": true, "channel": map[string]any{"id": ch}})
 	}
 }
 
@@ -271,6 +344,14 @@ func (f *Fake) Reply(t *testing.T, channel, threadTS, user, text string) string 
 	return f.deliver(t, map[string]any{"channel": channel, "user": user, "text": text, "thread_ts": threadTS, "channel_type": "im"})
 }
 
+// ReplyIn delivers a thread reply from user in a channel of the given type
+// ("channel", "group" or "im"), and returns its ts.
+func (f *Fake) ReplyIn(t *testing.T, channel, channelType, threadTS, user, text string) string {
+	t.Helper()
+	return f.deliver(t, map[string]any{"channel": channel, "user": user, "text": text, "thread_ts": threadTS,
+		"channel_type": channelType})
+}
+
 // Say delivers a top-level message from user in channel, whose type is
 // "im", "channel" or "group", and returns its ts.
 func (f *Fake) Say(t *testing.T, channel, channelType, user, text string) string {
@@ -305,12 +386,29 @@ func (f *Fake) Bot(t *testing.T, channel, text string) {
 
 func (f *Fake) deliver(t *testing.T, event map[string]any) string {
 	t.Helper()
+	event["type"] = "message"
+	return f.deliverEvent(t, event)
+}
+
+// deliverEvent sends an Events API event over every connection; a message
+// is given the next ts, which is returned.
+func (f *Fake) deliverEvent(t *testing.T, event map[string]any) string {
+	t.Helper()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.seq++
 	ts := fmt.Sprintf("1700000000.%06d", f.seq)
-	event["type"] = "message"
-	event["ts"] = ts
+	if event["type"] == "message" {
+		event["ts"] = ts
+		thread, _ := event["thread_ts"].(string)
+		user, _ := event["user"].(string)
+		text, _ := event["text"].(string)
+		m := map[string]any{"ts": ts, "user": user, "text": text}
+		if b, ok := event["bot_id"]; ok {
+			m["bot_id"] = b
+		}
+		f.remember(event["channel"].(string), ts, thread, m)
+	}
 	env := map[string]any{
 		"envelope_id": fmt.Sprintf("env-%d", f.seq), "type": "events_api", "accepts_response_payload": false,
 		"payload": map[string]any{
@@ -410,4 +508,38 @@ func (f *Fake) MeMessages() []Post {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]Post(nil), f.mes...)
+}
+
+// Private makes conversations.join refuse the channel, as for a private one.
+func (f *Fake) Private(channel string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.private == nil {
+		f.private = map[string]bool{}
+	}
+	f.private[channel] = true
+}
+
+// Joins are the channels the bot was asked to join.
+func (f *Fake) Joins() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.joins...)
+}
+
+// Leaves are the channels the bot was asked to leave.
+func (f *Fake) Leaves() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.leaves...)
+}
+
+// Added delivers the event that user was added to channel by inviter.
+func (f *Fake) Added(t *testing.T, channel, user, inviter string) {
+	t.Helper()
+	e := map[string]any{"type": "member_joined_channel", "channel": channel, "user": user, "channel_type": "C"}
+	if inviter != "" {
+		e["inviter"] = inviter
+	}
+	f.deliverEvent(t, e)
 }

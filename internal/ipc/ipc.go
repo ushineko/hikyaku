@@ -24,6 +24,9 @@ const (
 	// OpAnswerer switches the answerer (spec 007): Switch is "on", "off"
 	// or empty to only report.
 	OpAnswerer = "answerer"
+	// OpUsers lists or changes the users (spec 009): Switch is "add",
+	// "remove", "dm-on", "dm-off", or empty to list; User is the user.
+	OpUsers = "users"
 )
 
 // Error codes a response can carry, so the CLI can choose its exit code
@@ -62,8 +65,12 @@ type Request struct {
 	// Hold is how long a listener's name is held after its listen ends;
 	// 0 holds it not at all.
 	Hold time.Duration `json:"hold,omitempty"`
-	// Switch is the answerer's new state, for OpAnswerer.
-	Switch  string        `json:"switch,omitempty"`
+	// Switch is the answerer's new state, for OpAnswerer, or the change,
+	// for OpUsers.
+	Switch string `json:"switch,omitempty"`
+	// User and DM are the user and the DM grant, for OpUsers.
+	User    string        `json:"user,omitempty"`
+	DM      bool          `json:"dm,omitempty"`
 	Handle  string        `json:"handle,omitempty"`
 	Timeout time.Duration `json:"timeout,omitempty"`
 }
@@ -76,6 +83,15 @@ type Response struct {
 	Handle  string        `json:"handle,omitempty"`
 	Replies []store.Reply `json:"replies,omitempty"`
 	Status  *Status       `json:"status,omitempty"`
+	Users   []UserInfo    `json:"users,omitempty"`
+}
+
+// UserInfo is one admin's or user's access and today's spending.
+type UserInfo struct {
+	ID    string  `json:"id"`
+	Admin bool    `json:"admin,omitempty"`
+	DM    bool    `json:"dm,omitempty"`
+	Spent float64 `json:"spent_usd,omitempty"`
 }
 
 // Status is the service's account of itself.
@@ -114,6 +130,8 @@ type AnswererStatus struct {
 	Queued  int     `json:"queued"`
 	Spent   float64 `json:"spent_usd"`
 	Cap     float64 `json:"day_cap_usd"`
+	// UsersSpent is what users other than admins spent today, within Spent.
+	UsersSpent float64 `json:"users_spent_usd,omitempty"`
 }
 
 // Fail builds an error response.
