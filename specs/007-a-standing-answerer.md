@@ -286,6 +286,11 @@ reads: GitLab, GitHub, Jira, local repositories. What is at stake:
   `git log`, `git show` and `git status` with `Read`, `Grep` and `Glob`
   limited to `~/git`. Never `glab api` or `gh api`, nor any subcommand that
   writes. The list is in the settings and starts with exactly these.
+  **Amended** (owner, 2026-11-20): `git tag --list`, `git tag -l` and
+  `git describe` were added after the denial log showed a "latest release"
+  question blocked from reading tags. Git rejects `-d`, `--delete`, `-a`
+  and `-f` alongside `--list`, so the prefix rules cannot write; the e2e
+  probes deny making and deleting a tag and allow listing.
 - **D5 Limits** (2026-11-20): $0.50 and 5 minutes per run, $5 a day.
 - **D6 Follow-ups in the first version** (2026-11-20): see R9. Each follow-up is
   still a fresh run; the thread so far is given to it as fenced data.

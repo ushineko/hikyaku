@@ -135,7 +135,8 @@ func TestARunCanOnlyDoWhatTheAllowListSays(t *testing.T) {
 func TestTheAllowListHasNothingThatWritesOrFetches(t *testing.T) {
 	for _, tool := range config.DefaultAllowedTools() {
 		for _, bad := range []string{"Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "curl", "wget",
-			" api", "merge", "push", "comment", "create", "delete", "close", "approve", "Bash(git:", "Bash(*"} {
+			" api", "merge", "push", "comment", "create", "delete", "close", "approve", "Bash(git:", "Bash(*",
+			"Bash(git tag:", "Bash(git tag -d", "Bash(git tag -a"} {
 			assert.NotContains(t, tool, bad)
 		}
 		if strings.HasPrefix(tool, "Read") || strings.HasPrefix(tool, "Grep") || strings.HasPrefix(tool, "Glob") {
