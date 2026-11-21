@@ -2,7 +2,7 @@
 
 **Issue**: [#1](https://github.com/ushineko/hikyaku/issues/1)
 
-## Status: INCOMPLETE
+## Status: COMPLETE
 
 ## Executive Summary
 
@@ -131,10 +131,15 @@ setup wizard (spec 002), the window (spec 003) and the agent skills
   is contacted. `secret.TestLogHandlerRedactsEveryAttributeKind`,
   `cli.TestTokensNeverReachOutput` (tokens returned in a Slack error),
   `cli.TestTokenSetAndStatus`.
-- [ ] AC9 **Integration boundary, real Slack**: with the app installed in a test
+- [x] AC9 **Integration boundary, real Slack**: with the app installed in a test
   workspace, `send` reaches the DM, `ask` returns a reply typed in Slack, and
   a reply from a second, not-allowed account is ignored. Recorded in the E2E
   Test Plan results, not in CI. (R1, R3, R4, R6)
+  **Amended** (owner, 2026-11-20): `send` and `ask` passed against real
+  Slack (E2E results, steps 1 and 2). No second account is available, so
+  the not-allowed reply is covered by the fake Slack only
+  (`cli.TestAskReturnsTheAllowedReply`); the event path it uses is the
+  one steps 2 and 5 exercised for real.
 - [x] AC10 The manifest creates a working app; its scopes are listed in the
   README with the reason for each. (R11) The README half is held by
   `docs.TestTheManifestAndTheReadmeAgree`; the app created from the manifest
@@ -257,7 +262,7 @@ service `serve --headless --debug` on Linux, 2026-11-19 and 2026-11-20.
 | 1 `send --title --status ok` with a link | Pass: header, emoji, body and link in the DM |
 | 2 `ask`, reply typed in Slack | Pass on the second try. The first reply was typed into the DM, not the thread, and was ignored, as designed; that led to R13 (the reply hint) and D7 |
 | 2 `ask` killed while waiting | Found the handle printed only at the end; fixed as R14 |
-| 3 Reply from a second, not-allowed account | **Not run**: needs a second account in a shared channel |
+| 3 Reply from a second, not-allowed account | Not run: no second account. Accepted by the owner as covered by the fake-Slack test (AC9, amended) |
 | 4 Restart, then `inbox <handle>` | Pass: the reply was returned after the restart; `status` exited 3 while the service was down |
 | 5 Messages that are not replies | Pass: a top-level DM and the bot's own post arrived as events and were not taken as replies |
 | 6 Three-turn conversation with `--thread` | Pass: all three questions in one thread, each reply recorded under its own question's handle. Feedback that a follow-up need not repeat the grey line was taken into R15 |
