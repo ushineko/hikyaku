@@ -17,7 +17,7 @@ import (
 )
 
 type msgFlags struct {
-	title, status, channel, from, thread string
+	title, status, channel, from, thread, replyTo string
 }
 
 func (f *msgFlags) bind(c *cobra.Command) {
@@ -25,24 +25,29 @@ func (f *msgFlags) bind(c *cobra.Command) {
 	c.Flags().StringVar(&f.status, "status", "", "ok, warn or fail: an emoji before the title")
 	c.Flags().StringVar(&f.channel, "channel", "", "post to this channel ID instead of your DM with the bot")
 	c.Flags().StringVar(&f.thread, "thread", "", "post in the thread of the message with this handle, to keep a conversation together")
+	c.Flags().StringVar(&f.replyTo, "reply-to", "",
+		"answer the message with this handle where it was written: beside an instruction, in the thread of anything else")
 	c.Flags().StringVar(&f.from, "from", "",
 		`the line under the message saying where it came from (default: project, branch, host and agent; "" for none)`)
 }
 
 // request is the send request the flags and text describe. Without --from,
-// the origin is worked out from where the command runs. A follow-up in a
-// thread (--thread) carries neither the origin nor the reply hint: the
-// thread's first message already says both.
-func (f *msgFlags) request(cmd *cobra.Command, env *Env, text string, question bool) ipc.Request {
-	followUp := f.thread != ""
+// the origin is worked out from where the command runs. A follow-up
+// (--thread or --reply-to) carries neither the origin nor the reply hint:
+// the conversation already says both.
+func (f *msgFlags) request(cmd *cobra.Command, env *Env, text string, question bool) (ipc.Request, error) {
+	followUp := f.thread != "" || f.replyTo != ""
+	if f.replyTo != "" && (f.thread != "" || f.channel != "") {
+		return ipc.Request{}, fail(ExitUsage, "--reply-to decides where the message goes; drop --thread and --channel")
+	}
 	from := f.from
 	if !cmd.Flags().Changed("from") && env.Origin != nil && !followUp {
 		from = env.Origin(cmd.Context())
 	}
 	return ipc.Request{
 		Op: ipc.OpSend, Text: text, Title: f.title, Status: f.status, Channel: f.channel,
-		From: from, Question: question && !followUp, Thread: f.thread,
-	}
+		From: from, Question: question, Thread: f.thread, ReplyTo: f.replyTo,
+	}, nil
 }
 
 // messageText is the arguments joined, or stdin when there are none (or the
@@ -73,7 +78,11 @@ func sendCmd(env *Env) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := ipc.Call(cmd.Context(), env.SocketPath, f.request(cmd, env, text, false))
+			req, err := f.request(cmd, env, text, false)
+			if err != nil {
+				return err
+			}
+			resp, err := ipc.Call(cmd.Context(), env.SocketPath, req)
 			if err != nil || !resp.OK {
 				return callErr(err, resp)
 			}
@@ -100,7 +109,11 @@ func askCmd(env *Env) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := ipc.Call(cmd.Context(), env.SocketPath, f.request(cmd, env, text, true))
+			req, err := f.request(cmd, env, text, true)
+			if err != nil {
+				return err
+			}
+			resp, err := ipc.Call(cmd.Context(), env.SocketPath, req)
 			if err != nil || !resp.OK {
 				return callErr(err, resp)
 			}
@@ -210,12 +223,32 @@ func statusCmd(env *Env) *cobra.Command {
 			_, _ = fmt.Fprintf(env.Stdout, "hikyaku %s running (pid %d), %s; owner %s, %d allowed repliers\n",
 				st.Version, st.PID, conn, orNone(st.Owner), st.Repliers)
 			if len(st.Listeners) > 0 {
-				_, _ = fmt.Fprintf(env.Stdout, "listening: %s\n", strings.Join(st.Listeners, ", "))
+				_, _ = fmt.Fprintf(env.Stdout, "listening: %s\n", listenersLine(st))
 			}
 			_, _ = fmt.Fprintln(env.Stdout, answererLine(st.Answerer))
 			return nil
 		},
 	}
+}
+
+// listenersLine names each listener, with what it is doing when it is not
+// simply waiting.
+func listenersLine(st *ipc.Status) string {
+	if len(st.ListenerStates) != len(st.Listeners) {
+		return strings.Join(st.Listeners, ", ")
+	}
+	parts := make([]string, 0, len(st.ListenerStates))
+	for _, l := range st.ListenerStates {
+		switch l.State {
+		case ipc.ListenerBusy:
+			parts = append(parts, fmt.Sprintf("%s (busy, %d queued)", l.Name, l.Queued))
+		case ipc.ListenerConversation:
+			parts = append(parts, l.Name+" (in a conversation)")
+		default:
+			parts = append(parts, l.Name)
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func orNone(s string) string {

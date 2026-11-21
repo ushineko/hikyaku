@@ -153,18 +153,46 @@ hikyaku listen --name hayami --timeout 2h
 
 Write in your DM with the bot, outside any thread. The agent prints the
 message, fenced and marked as an instruction typed in Slack, and the
-message's handle on stderr, so it can answer in your message's thread with
-`send --thread` or `ask --thread`. The bot answers in the thread with
-"Picked up." and the listening agent's origin line, so you see which one has
-it. One `listen` takes one instruction; an agent that wants more runs it
-again.
+message's handle on stderr. It answers where you wrote with
+`send --reply-to <handle>` or `ask --reply-to <handle>`: beside your
+message, top-level, so the DM reads as a conversation. `--thread <handle>`
+answers in your message's thread instead. While an `ask --reply-to` waits,
+your next top-level message is its answer.
+
+One `listen` takes one instruction. Afterwards the agent's name is held for
+`--hold` (30 minutes by default, `--hold 0` for none): a message for it
+waits, and the agent's next `listen` takes it at once. If the hold runs out
+with no `listen`, the bot says "_stopped listening for *name*_" in the DM
+(a `/me`, so it reads "nykbot stopped listening for hayami"),
+and what was waiting is not delivered. Waiting messages live in the
+service's memory only; a restart drops them without a word.
+
+Reactions on your message say what happened to it:
+
+| Reaction | Meaning |
+| --- | --- |
+| ⏳ | Waiting for a busy agent |
+| 👀 | An agent took it |
+| ✅ | The agent answered it |
+| 📭 | Not delivered: the agent stopped listening |
+
+They need the `reactions:write` scope. An app installed before it was added
+posts short notes in the thread instead ("Picked up.", "Queued: …") until
+it is reinstalled.
+
+A `/me` message counts like any other.
 
 With several agents listening, start the message with a name and a colon:
 `hayami: run the tests` reaches the listener named `hayami` (by default, an
 agent's name is its project's). A message without a name reaches the only
 listener; with several, it reaches none, and the bot answers with the names
 to use. A message nobody is listening for is not kept: the bot answers that
-no agent is listening. `hikyaku status` lists who is listening.
+no agent is listening. `hikyaku status` lists who is listening, and which
+of them are busy or in a conversation.
+
+Agents come first: with the answerer on, a message reaches it only when no
+agent is listening or held. Start a message with `answerer:` to ask the
+answerer anyway.
 
 Only allowed users' DMs are instructions. Messages in channels never are,
 and nothing listens unless an agent runs `listen`. hikyaku starts an agent
@@ -253,11 +281,12 @@ manifest disagree.
 
 | Scope | Why |
 | --- | --- |
-| `chat:write` | Post messages |
+| `chat:write` | Post messages, and the `/me` notice that an agent stopped listening |
 | `im:write` | Open the DM with the owner |
 | `im:history` | Hear thread replies in the DM |
 | `channels:history` | Hear thread replies in a public channel posted to with `--channel` |
 | `groups:history` | Hear thread replies in a private channel posted to with `--channel` |
+| `reactions:write` | Mark your messages to agents as waiting, taken, answered or not delivered |
 
 The app-level token carries `connections:write`, which opens the Socket Mode
 connection.
@@ -295,6 +324,15 @@ Go 1.26 or newer.
 ## Changelog
 
 ### Unreleased
+
+- A listening agent's name is held after each `listen` (`--hold`, 30
+  minutes by default), so messages for a busy agent wait for it;
+  `send --reply-to` and `ask --reply-to` answer beside your message, and a
+  conversation can go on without threads; reactions (⏳ 👀 ✅ 📭) show what
+  happened to each message, which needs the new `reactions:write` scope;
+  "*name* stopped listening" when a hold runs out; `/me` counts as a
+  message; `answerer:` reaches the answerer while an agent listens
+  (spec 006).
 
 ### 0.1.0
 

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +33,13 @@ type Post struct {
 	Blocks   []map[string]any
 	// UnfurlLinks and UnfurlMedia are the flags as sent: "" when not sent.
 	UnfurlLinks, UnfurlMedia string
+}
+
+// Reaction is one reactions.add or reactions.remove call as the fake
+// received it.
+type Reaction struct {
+	Channel, TS, Name string
+	Removed           bool
 }
 
 // Fake is the fake Slack.
@@ -55,6 +63,12 @@ type Fake struct {
 	postError string
 	// rejectApp makes apps.connections.open answer invalid_auth.
 	rejectApp bool
+	// reactions is every reactions.add and reactions.remove, in order.
+	reactions []Reaction
+	// noReactions makes the reactions methods answer missing_scope.
+	noReactions bool
+	// mes is the text of every chat.meMessage, in order.
+	mes       []Post
 	connected chan struct{}
 }
 
@@ -66,6 +80,9 @@ func New(t *testing.T, botToken, appToken string) *Fake {
 	mux.HandleFunc("/api/apps.connections.open", f.connectionsOpen)
 	mux.HandleFunc("/api/chat.postMessage", f.postMessage)
 	mux.HandleFunc("/api/conversations.open", f.conversationsOpen)
+	mux.HandleFunc("/api/reactions.add", f.reaction(false))
+	mux.HandleFunc("/api/reactions.remove", f.reaction(true))
+	mux.HandleFunc("/api/chat.meMessage", f.meMessage)
 	mux.HandleFunc("/ws", f.websocket)
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.Close)
@@ -145,6 +162,40 @@ func (f *Fake) postMessage(w http.ResponseWriter, r *http.Request) {
 	f.lastTS = ts
 	f.mu.Unlock()
 	reply(w, map[string]any{"ok": true, "channel": p.Channel, "ts": ts})
+}
+
+func (f *Fake) reaction(removed bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if bearer(r) != f.botToken {
+			reply(w, map[string]any{"ok": false, "error": "invalid_auth"})
+			return
+		}
+		_ = r.ParseForm()
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.noReactions {
+			reply(w, map[string]any{"ok": false, "error": "missing_scope", "needed": "reactions:write"})
+			return
+		}
+		f.reactions = append(f.reactions, Reaction{
+			Channel: r.Form.Get("channel"), TS: r.Form.Get("timestamp"), Name: r.Form.Get("name"), Removed: removed,
+		})
+		reply(w, map[string]any{"ok": true})
+	}
+}
+
+func (f *Fake) meMessage(w http.ResponseWriter, r *http.Request) {
+	if bearer(r) != f.botToken {
+		reply(w, map[string]any{"ok": false, "error": "invalid_auth"})
+		return
+	}
+	_ = r.ParseForm()
+	f.mu.Lock()
+	f.seq++
+	ts := fmt.Sprintf("1700000000.%06d", f.seq)
+	f.mes = append(f.mes, Post{Channel: r.Form.Get("channel"), Text: r.Form.Get("text"), ThreadTS: r.Form.Get("thread_ts")})
+	f.mu.Unlock()
+	reply(w, map[string]any{"ok": true, "channel": r.Form.Get("channel"), "ts": ts})
 }
 
 func (f *Fake) websocket(w http.ResponseWriter, r *http.Request) {
@@ -227,6 +278,25 @@ func (f *Fake) Say(t *testing.T, channel, channelType, user, text string) string
 	return f.deliver(t, map[string]any{"channel": channel, "user": user, "text": text, "channel_type": channelType})
 }
 
+// Me delivers a /me message from user: top-level when threadTS is empty,
+// in that thread otherwise. It returns its ts.
+func (f *Fake) Me(t *testing.T, channel, threadTS, user, text string) string {
+	t.Helper()
+	e := map[string]any{"channel": channel, "user": user, "text": text, "channel_type": "im", "subtype": "me_message"}
+	if threadTS != "" {
+		e["thread_ts"] = threadTS
+	}
+	return f.deliver(t, e)
+}
+
+// BotMe delivers a top-level /me message from a bot in the DM channel,
+// posted as user (an app can post as a person it acts for).
+func (f *Fake) BotMe(t *testing.T, channel, user, text string) {
+	t.Helper()
+	f.deliver(t, map[string]any{"channel": channel, "bot_id": "B00000001", "user": user, "text": text,
+		"channel_type": "im", "subtype": "me_message"})
+}
+
 // Bot delivers a top-level message from a bot in the DM channel.
 func (f *Fake) Bot(t *testing.T, channel, text string) {
 	t.Helper()
@@ -300,4 +370,44 @@ func (f *Fake) RejectAppToken() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rejectApp = true
+}
+
+// Reactions returns every reactions.add and reactions.remove so far.
+func (f *Fake) Reactions() []Reaction {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Reaction(nil), f.reactions...)
+}
+
+// ReactionsOn is the reactions on the message at ts now, in the order they
+// were added.
+func (f *Fake) ReactionsOn(ts string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var on []string
+	for _, r := range f.reactions {
+		if r.TS != ts {
+			continue
+		}
+		on = slices.DeleteFunc(on, func(n string) bool { return n == r.Name })
+		if !r.Removed {
+			on = append(on, r.Name)
+		}
+	}
+	return on
+}
+
+// NoReactionScope makes the reactions methods answer missing_scope, as for
+// an app installed without reactions:write.
+func (f *Fake) NoReactionScope() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.noReactions = true
+}
+
+// MeMessages returns every chat.meMessage so far.
+func (f *Fake) MeMessages() []Post {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Post(nil), f.mes...)
 }

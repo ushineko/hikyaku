@@ -38,9 +38,13 @@ type Message struct {
 	TS      string `json:"ts"`
 	// Thread is the ts of the thread's first message when this one was
 	// posted inside a thread, and empty when it started its own.
-	Thread  string    `json:"thread,omitempty"`
-	Sent    time.Time `json:"sent"`
-	Replies []Reply   `json:"replies,omitempty"`
+	Thread string `json:"thread,omitempty"`
+	// TopLevel marks a message an answer continues beside, top-level, rather
+	// than in its thread: an instruction, or a message posted with
+	// --reply-to on one (spec 006, R4).
+	TopLevel bool      `json:"top_level,omitempty"`
+	Sent     time.Time `json:"sent"`
+	Replies  []Reply   `json:"replies,omitempty"`
 }
 
 // Root is the ts of the thread the message belongs to.
@@ -102,6 +106,20 @@ func (s *Store) Add(channel, ts, thread string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.msgs[h] = &Message{Handle: h, Channel: channel, TS: ts, Thread: thread, Sent: s.now()}
+	s.prune()
+	return h, s.save()
+}
+
+// AddTopLevel records a top-level message that answers continue beside
+// (Message.TopLevel) and returns its new handle.
+func (s *Store) AddTopLevel(channel, ts string) (string, error) {
+	h, err := newHandle()
+	if err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.msgs[h] = &Message{Handle: h, Channel: channel, TS: ts, TopLevel: true, Sent: s.now()}
 	s.prune()
 	return h, s.save()
 }

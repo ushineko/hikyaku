@@ -56,6 +56,12 @@ type Request struct {
 	Name string `json:"name,omitempty"`
 	// Thread is the handle of a message whose thread to post in.
 	Thread string `json:"thread,omitempty"`
+	// ReplyTo is the handle of a message to answer where it was written
+	// (spec 006, R4).
+	ReplyTo string `json:"reply_to,omitempty"`
+	// Hold is how long a listener's name is held after its listen ends;
+	// 0 holds it not at all.
+	Hold time.Duration `json:"hold,omitempty"`
 	// Switch is the answerer's new state, for OpAnswerer.
 	Switch  string        `json:"switch,omitempty"`
 	Handle  string        `json:"handle,omitempty"`
@@ -79,10 +85,26 @@ type Status struct {
 	Connected bool   `json:"connected"`
 	Owner     string `json:"owner,omitempty"`
 	Repliers  int    `json:"repliers"`
-	// Listeners are the names of the agents waiting for an instruction.
+	// Listeners are the names of the agents listening, waiting or held.
 	Listeners []string `json:"listeners,omitempty"`
+	// ListenerStates say what each of them is doing, in the same order.
+	ListenerStates []ListenerState `json:"listener_states,omitempty"`
 	// Answerer is the answerer's state.
 	Answerer AnswererStatus `json:"answerer"`
+}
+
+// Listener states.
+const (
+	ListenerWaiting      = "waiting"
+	ListenerBusy         = "busy"
+	ListenerConversation = "conversation"
+)
+
+// ListenerState is one listener's account of itself.
+type ListenerState struct {
+	Name   string `json:"name"`
+	State  string `json:"state"`
+	Queued int    `json:"queued,omitempty"`
 }
 
 // AnswererStatus is the answerer's account of itself.

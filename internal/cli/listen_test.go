@@ -3,6 +3,7 @@ package cli_test
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,12 +21,21 @@ type running struct {
 	done     chan int
 }
 
+// startListen starts a listen with no hold, as in spec 005; args can give
+// one.
 func startListen(h *harness, args ...string) *running {
 	r := &running{done: make(chan int, 1)}
 	go func() {
-		r.done <- runWith(h, &r.out, &r.err, append([]string{"listen", "--timeout", "20s"}, args...)...)
+		r.done <- runWith(h, &r.out, &r.err, append([]string{"listen", "--timeout", "20s", "--hold", "0"}, args...)...)
 	}()
 	return r
+}
+
+// reactedWith waits until the message at ts carries exactly these reactions.
+func (h *harness) reactedWith(ts string, want ...string) {
+	h.t.Helper()
+	require.Eventually(h.t, func() bool { return slices.Equal(h.fake.ReactionsOn(ts), want) },
+		5*time.Second, 10*time.Millisecond, "reactions on %s: %v, want %v", ts, h.fake.ReactionsOn(ts), want)
 }
 
 // result waits for the listen to finish and returns its exit code.
@@ -80,21 +90,18 @@ func TestAnInstructionReachesTheListener(t *testing.T) {
 	assert.Equal(t, m[1], m[4])
 	assert.Equal(t, owner, m[2])
 	assert.Equal(t, "run the e2e suite", m[3])
-	hm := regexp.MustCompile(`hikyaku: handle (hk-[a-z2-9]{12}); answer in its thread with: hikyaku send --thread hk-`).
+	hm := regexp.MustCompile(`hikyaku: handle (hk-[a-z2-9]{12}); answer with: hikyaku send --reply-to hk-`).
 		FindStringSubmatch(l.err.String())
 	require.NotNil(t, hm, l.err.String())
 	handle := hm[1]
 
-	picked := h.waitPosts(1)[0]
-	assert.Equal(t, ts, picked.ThreadTS)
-	assert.Equal(t, "Picked up.", picked.Text)
-	assert.Equal(t, []string{h.origin}, footer(picked), "the person sees which agent has it")
+	h.reactedWith(ts, "eyes")
 	_, out, _ := h.run("", "status")
-	assert.NotContains(t, out, "listening:", "one call takes one instruction")
+	assert.NotContains(t, out, "listening:", "with no hold, one call takes one instruction")
 
 	code, out, _ := h.run("", "send", "--thread", handle, "on it")
 	require.Equal(t, 0, code)
-	answer := h.waitPosts(2)[1]
+	answer := h.waitPosts(1)[0]
 	assert.Equal(t, ts, answer.ThreadTS, "the agent answers in the instruction's thread")
 	h.fake.Reply(t, slacktest.DMChannel, ts, owner, "thanks")
 	require.Eventually(t, func() bool {
@@ -132,11 +139,12 @@ func TestOnlyAnAllowedDMIsAnInstruction(t *testing.T) {
 	h.fake.Reply(t, slacktest.DMChannel, "1699999999.000001", owner, "a thread reply")
 	l.stillWaiting(t)
 
-	h.fake.Say(t, slacktest.DMChannel, "im", owner, "the real one")
+	genuine := h.fake.Say(t, slacktest.DMChannel, "im", owner, "the real one")
 	require.Equal(t, 0, l.result(t))
 	assert.Contains(t, l.out.String(), "\nthe real one\n")
 	assert.NotContains(t, l.out.String(), "delete the repo")
-	assert.Len(t, h.waitPosts(1), 1, "only the real one was answered")
+	h.reactedWith(genuine, "eyes")
+	assert.Len(t, h.fake.Reactions(), 1, "only the real one was taken")
 	assert.Contains(t, h.serveLog.String(), "ignored an instruction from a user who is not allowed")
 	assert.Contains(t, h.serveLog.String(), stranger)
 	assert.NotContains(t, h.serveLog.String(), "delete the repo", "a stranger's text is not kept")
@@ -162,7 +170,7 @@ func TestInstructionsAreAddressedByName(t *testing.T) {
 	ts := h.fake.Say(t, slacktest.DMChannel, "im", owner, "hello")
 	alpha.stillWaiting(t)
 	beta.stillWaiting(t)
-	several := h.waitPosts(2)[1]
+	several := h.waitPosts(1)[0]
 	assert.Equal(t, ts, several.ThreadTS)
 	assert.Contains(t, several.Text, "Several agents are listening: alpha, beta.")
 	assert.Contains(t, several.Text, "not delivered")
