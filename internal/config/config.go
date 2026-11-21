@@ -44,6 +44,99 @@ type Settings struct {
 	// Retention is how long a message is remembered, as a Go duration; empty
 	// is seven days.
 	Retention string `yaml:"retention,omitempty"`
+	// Answerer configures the answerer (spec 007). Whether it is on is not
+	// a setting: it is switched with `hikyaku answerer on|off`.
+	Answerer Answerer `yaml:"answerer,omitempty"`
+}
+
+// Answerer is how the answerer's runs are started. Every field has a
+// default; an empty section is the defaults.
+type Answerer struct {
+	// Claude is the Claude Code command, by name or path.
+	Claude string `yaml:"claude,omitempty"`
+	// Model is passed as --model when set; empty is Claude Code's default.
+	Model string `yaml:"model,omitempty"`
+	// AllowedTools replaces the default read-only allow-list. Everything
+	// else is denied.
+	AllowedTools []string `yaml:"allowed_tools,omitempty"`
+	// MCPConfig is an MCP configuration file for the runs; no other MCP
+	// server is loaded.
+	MCPConfig string `yaml:"mcp_config,omitempty"`
+	// RunBudgetUSD and DayBudgetUSD cap the cost of one run and of a day.
+	RunBudgetUSD float64 `yaml:"run_budget_usd,omitempty"`
+	DayBudgetUSD float64 `yaml:"day_budget_usd,omitempty"`
+	// RunTimeout is how long a run may take, as a Go duration.
+	RunTimeout string `yaml:"run_timeout,omitempty"`
+}
+
+// Answerer defaults (spec 007, D4 and D5).
+const (
+	DefaultRunBudgetUSD = 0.50
+	DefaultDayBudgetUSD = 5.00
+	DefaultRunTimeout   = 5 * time.Minute
+)
+
+// DefaultAllowedTools is the read-only allow-list (spec 007, D4): read
+// subcommands of glab and gh, Jira's read tools, and reading the
+// repositories under ~/git. No tool that writes, and none that reaches an
+// arbitrary address.
+func DefaultAllowedTools() []string {
+	tools := []string{
+		"Read(~/git/**)", "Grep(~/git/**)", "Glob(~/git/**)",
+		"Bash(git log:*)", "Bash(git show:*)", "Bash(git status:*)",
+	}
+	for _, c := range []string{
+		"glab mr list", "glab mr view", "glab ci status", "glab ci list", "glab ci get",
+		"glab release list", "glab release view", "glab issue list", "glab issue view",
+		"gh pr list", "gh pr view", "gh pr status", "gh pr checks", "gh run list", "gh run view",
+		"gh release list", "gh release view", "gh issue list", "gh issue view",
+	} {
+		tools = append(tools, "Bash("+c+":*)")
+	}
+	for _, t := range []string{"jira_get_issue", "jira_search", "jira_get_project_issues", "jira_get_sprint_issues"} {
+		tools = append(tools, "mcp__atlassian__"+t)
+	}
+	return tools
+}
+
+// Tools is the allow-list in effect.
+func (a Answerer) Tools() []string {
+	if len(a.AllowedTools) > 0 {
+		return slices.Clone(a.AllowedTools)
+	}
+	return DefaultAllowedTools()
+}
+
+// Command is the Claude Code command in effect.
+func (a Answerer) Command() string {
+	if a.Claude != "" {
+		return a.Claude
+	}
+	return "claude"
+}
+
+// RunBudget is the cost cap of one run.
+func (a Answerer) RunBudget() float64 {
+	if a.RunBudgetUSD > 0 {
+		return a.RunBudgetUSD
+	}
+	return DefaultRunBudgetUSD
+}
+
+// DayBudget is the cost cap of a day.
+func (a Answerer) DayBudget() float64 {
+	if a.DayBudgetUSD > 0 {
+		return a.DayBudgetUSD
+	}
+	return DefaultDayBudgetUSD
+}
+
+// Timeout is how long one run may take.
+func (a Answerer) Timeout() time.Duration {
+	if d, err := time.ParseDuration(a.RunTimeout); err == nil && d > 0 {
+		return d
+	}
+	return DefaultRunTimeout
 }
 
 // Path is the settings file's location.
@@ -84,6 +177,14 @@ func (s Settings) validate() error {
 		if d, err := time.ParseDuration(s.Retention); err != nil || d <= 0 {
 			return fmt.Errorf("retention %q: want a positive duration such as 168h", s.Retention)
 		}
+	}
+	if s.Answerer.RunTimeout != "" {
+		if d, err := time.ParseDuration(s.Answerer.RunTimeout); err != nil || d <= 0 {
+			return fmt.Errorf("answerer.run_timeout %q: want a positive duration such as 5m", s.Answerer.RunTimeout)
+		}
+	}
+	if s.Answerer.RunBudgetUSD < 0 || s.Answerer.DayBudgetUSD < 0 {
+		return errors.New("answerer budgets must not be negative")
 	}
 	return nil
 }

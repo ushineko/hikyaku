@@ -21,6 +21,9 @@ const (
 	OpListen = "listen"
 	OpInbox  = "inbox"
 	OpStatus = "status"
+	// OpAnswerer switches the answerer (spec 007): Switch is "on", "off"
+	// or empty to only report.
+	OpAnswerer = "answerer"
 )
 
 // Error codes a response can carry, so the CLI can choose its exit code
@@ -52,7 +55,9 @@ type Request struct {
 	// Name is a listener's name.
 	Name string `json:"name,omitempty"`
 	// Thread is the handle of a message whose thread to post in.
-	Thread  string        `json:"thread,omitempty"`
+	Thread string `json:"thread,omitempty"`
+	// Switch is the answerer's new state, for OpAnswerer.
+	Switch  string        `json:"switch,omitempty"`
 	Handle  string        `json:"handle,omitempty"`
 	Timeout time.Duration `json:"timeout,omitempty"`
 }
@@ -76,6 +81,17 @@ type Status struct {
 	Repliers  int    `json:"repliers"`
 	// Listeners are the names of the agents waiting for an instruction.
 	Listeners []string `json:"listeners,omitempty"`
+	// Answerer is the answerer's state.
+	Answerer AnswererStatus `json:"answerer"`
+}
+
+// AnswererStatus is the answerer's account of itself.
+type AnswererStatus struct {
+	On      bool    `json:"on"`
+	Running bool    `json:"running"`
+	Queued  int     `json:"queued"`
+	Spent   float64 `json:"spent_usd"`
+	Cap     float64 `json:"day_cap_usd"`
 }
 
 // Fail builds an error response.
